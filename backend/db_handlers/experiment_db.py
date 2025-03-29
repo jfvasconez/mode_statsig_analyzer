@@ -2,113 +2,235 @@
 Handles database operations related to experiments.
 """
 
-from typing import Dict, Any, List, Tuple
-# Import Session and scoped_session for type hinting
-from sqlalchemy.orm import Session, scoped_session
-
+from typing import Dict, List, Any, Tuple, Optional
+import pandas as pd
+from sqlalchemy.exc import SQLAlchemyError
 from ..extensions import db
-# Import models needed for saving
-from ..models import Experiment, Variant, FunnelStep, StepResult
+from ..models.experiment import Experiment
+from ..models.variant import Variant
+from ..models.funnel_step import FunnelStep
+from ..models.user_event import UserEvent
 
+def create_experiment_record(experiment_name: str) -> int:
+    """Create a new experiment record in the database."""
+    experiment = Experiment(experiment_name=experiment_name)
+    try:
+        db.session.add(experiment)
+        db.session.commit()
+        return experiment.id
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        print(f"Error creating experiment: {e}")
+        raise
 
-def _create_experiment_record(session: scoped_session, original_filename: str | None) -> Experiment:
-    """Creates and flushes a new Experiment record."""
-    new_experiment = Experiment(original_filename=original_filename)
-    session.add(new_experiment)
-    session.flush() # Flush to get ID
-    return new_experiment
-
-def _create_variant_records(session: scoped_session, variants_data: List[Dict[str, Any]], experiment_id: int) -> Dict[str, Variant]:
-    """Creates and flushes Variant records for an experiment."""
-    variant_map = {}
-    for variant_data in variants_data:
-        new_variant = Variant(
-            name=variant_data['name'],
-            user_count=variant_data['user_count'],
-            experiment_id=experiment_id
-        )
-        session.add(new_variant)
-        session.flush()
-        variant_map[variant_data['name']] = new_variant
-    return variant_map
-
-def _create_step_and_result_records(session: scoped_session, variants_data: List[Dict[str, Any]], variant_map: Dict[str, Variant], experiment_id: int):
-    """Creates FunnelStep (if needed) and StepResult records."""
-    step_map: Dict[str, FunnelStep] = {}
-    for variant_data in variants_data:
-        variant_name = variant_data['name']
-        new_variant = variant_map[variant_name]
-
-        for result_data in variant_data.get('results', []):
-            step_name = result_data['step_name']
-
-            # Find or Create FunnelStep
-            if step_name not in step_map:
-                # Check if step already exists for this experiment (scoped session query)
-                existing_step = session.query(FunnelStep).filter_by(experiment_id=experiment_id, name=step_name).first()
-                if existing_step:
-                    step_map[step_name] = existing_step
-                    new_step = existing_step
-                else:
-                    new_step = FunnelStep(name=step_name, experiment_id=experiment_id)
-                    session.add(new_step)
-                    session.flush()
-                    step_map[step_name] = new_step
-            else:
-                new_step = step_map[step_name]
-
-            # Create StepResult
-            metrics = result_data.get('metrics')
-            new_step_result = StepResult(
-                variant_id=new_variant.id,
-                funnel_step_id=new_step.id,
-                converted_count=result_data['converted_count'],
-                posterior_mean=metrics.get('posterior_mean_b') if metrics else None,
-                ci_lower_95=metrics.get('ci_lower_95_b') if metrics else None,
-                ci_upper_95=metrics.get('ci_upper_95_b') if metrics else None,
-                prob_vs_control=metrics.get('prob_b_better_than_a') if metrics else None
+def add_funnel_steps(experiment_id: int, step_names: List[str]) -> None:
+    """Add funnel steps for an experiment."""
+    try:
+        # Add each funnel step
+        for i, step_name in enumerate(step_names):
+            funnel_step = FunnelStep(
+                experiment_id=experiment_id,
+                name=step_name,
+                step_order=i + 1  # 1-based order
             )
-            session.add(new_step_result)
+            db.session.add(funnel_step)
+        db.session.commit()
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        print(f"Error adding funnel steps: {e}")
+        raise
 
+def save_variant_data(
+    experiment_id: int, 
+    variant_name: str, 
+    user_count: int, 
+    variant_df: pd.DataFrame, 
+    funnel_steps: List[str]
+) -> None:
+    """Save variant data including user events for funnel steps."""
+    try:
+        # Create variant record
+        variant = Variant(
+            experiment_id=experiment_id,
+            variant_name=variant_name,
+            user_count=user_count
+        )
+        db.session.add(variant)
+        db.session.flush()  # Get the variant ID without committing
+        
+        # Get funnel step records for this experiment
+        db_funnel_steps = FunnelStep.query.filter_by(experiment_id=experiment_id).all()
+        step_id_map = {step.name: step.id for step in db_funnel_steps}
+        
+        # Process each user's funnel steps
+        user_events = []
+        for _, row in variant_df.iterrows():
+            user_id = row['user_id']
+            
+            for step_name in funnel_steps:
+                # Check if user completed this step (1 = completed, 0 = not completed)
+                completed = int(row[step_name]) == 1
+                
+                if step_name in step_id_map:
+                    user_event = UserEvent(
+                        variant_id=variant.id,
+                        user_id=str(user_id),
+                        funnel_step_id=step_id_map[step_name],
+                        completed=completed
+                    )
+                    user_events.append(user_event)
+        
+        # Bulk insert user events
+        db.session.bulk_save_objects(user_events)
+        db.session.commit()
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        print(f"Error saving variant data: {e}")
+        raise
 
-# --- Main Public Function --- 
-def save_experiment_results(processed_data: Dict[str, Any]) -> int:
-  """
-  Saves the processed experiment data and analysis results to the database
-  by orchestrating calls to helper functions within a single transaction.
+def get_experiment_with_variants(experiment_id: int) -> Optional[Tuple[Experiment, List[Variant], Dict[int, FunnelStep]]]:
+    """Get experiment with its variants and funnel steps."""
+    try:
+        experiment = Experiment.query.get(experiment_id)
+        if not experiment:
+            return None
+            
+        variants = Variant.query.filter_by(experiment_id=experiment_id).all()
+        funnel_steps = FunnelStep.query.filter_by(experiment_id=experiment_id).order_by(FunnelStep.step_order).all()
+        
+        # Create a map of funnel step ID to object for easy lookup
+        funnel_steps_map = {step.id: step for step in funnel_steps}
+        
+        return experiment, variants, funnel_steps_map
+    except SQLAlchemyError as e:
+        print(f"Error retrieving experiment: {e}")
+        raise
 
-  Args:
-    processed_data: The structured data from the logic handler.
+def get_experiment_name(experiment_id: int) -> str:
+    """Get the name of an experiment."""
+    experiment = Experiment.query.get(experiment_id)
+    if experiment:
+        return experiment.experiment_name
+    return "Unknown Experiment"
 
-  Returns:
-    The ID of the newly created Experiment record.
+def get_variant_results(experiment_id: int) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Get conversion rates for each funnel step for all variants in an experiment.
+    Returns a dictionary mapping variant names to lists of step results.
+    """
+    try:
+        # Get all variants for the experiment
+        variants = Variant.query.filter_by(experiment_id=experiment_id).all()
+        if not variants:
+            return {}
+            
+        # Get all funnel steps for the experiment, ordered by step_order
+        funnel_steps = FunnelStep.query.filter_by(experiment_id=experiment_id).order_by(FunnelStep.step_order).all()
+        if not funnel_steps:
+            return {}
+            
+        results = {}
+        
+        for variant in variants:
+            variant_results = []
+            
+            for step in funnel_steps:
+                # Count users who completed this step for this variant
+                completed_count = UserEvent.query.filter_by(
+                    variant_id=variant.id,
+                    funnel_step_id=step.id,
+                    completed=True
+                ).count()
+                
+                # Calculate conversion rate
+                conversion_rate = completed_count / variant.user_count if variant.user_count > 0 else 0
+                
+                variant_results.append({
+                    'step_name': step.name,
+                    'completed_count': completed_count,
+                    'conversion_rate': conversion_rate
+                })
+                
+            results[variant.variant_name] = variant_results
+            
+        return results
+    except SQLAlchemyError as e:
+        print(f"Error getting variant results: {e}")
+        raise
 
-  Raises:
-    Exception: If there is an error during the database transaction.
-  """
-  session = db.session
-  try:
-    # 1. Create Experiment
-    new_experiment = _create_experiment_record(
-        session,
-        processed_data.get('original_filename')
+def save_experiment_results(data: Dict[str, Any]) -> int:
+    """
+    Save experiment results to the database.
+    This is a placeholder for now.
+    """
+    # TODO: Implement proper saving logic once we have models defined
+    # For now, just return a dummy experiment ID
+    return 1
+
+def create_variant_record(experiment_id: int, variant_name: str, user_count: int) -> int:
+    """Create a new variant record in the database."""
+    variant = Variant(
+        experiment_id=experiment_id,
+        variant_name=variant_name,
+        user_count=user_count
     )
-    experiment_id = new_experiment.id
-    variants_data = processed_data.get('variants', [])
+    try:
+        db.session.add(variant)
+        db.session.flush()  # Get the variant ID without committing
+        return variant.id
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        print(f"Error creating variant record: {e}")
+        raise
 
-    # 2. Create Variants
-    variant_map = _create_variant_records(session, variants_data, experiment_id)
+def get_or_create_funnel_step(experiment_id: int, step_name: str) -> int:
+    """Get or create a funnel step for the given experiment."""
+    try:
+        # Check if step already exists
+        step = FunnelStep.query.filter_by(
+            experiment_id=experiment_id,
+            name=step_name
+        ).first()
+        
+        if step:
+            return step.id
+            
+        # Get highest existing step order
+        max_order = db.session.query(db.func.max(FunnelStep.step_order)).filter(
+            FunnelStep.experiment_id == experiment_id
+        ).scalar() or 0
+        
+        # Create new step with next order
+        new_step = FunnelStep(
+            experiment_id=experiment_id,
+            name=step_name,
+            step_order=max_order + 1
+        )
+        db.session.add(new_step)
+        db.session.flush()
+        return new_step.id
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        print(f"Error creating funnel step: {e}")
+        raise
 
-    # 3. Create Steps and Results
-    _create_step_and_result_records(session, variants_data, variant_map, experiment_id)
-
-    # 4. Commit transaction
-    session.commit()
-    print(f"Successfully saved Experiment {experiment_id}")
-    return experiment_id
-
-  except Exception as e:
-    session.rollback() # Roll back the transaction in case of error
-    print(f"Database error saving experiment: {e}")
-    # Log the error properly in a real application
-    raise Exception("Failed to save experiment results to the database.") 
+def save_conversion_data(variant_id: int, funnel_step_id: int, conversion_count: int, conversion_rate: float) -> None:
+    """Save conversion data for a variant and funnel step."""
+    try:
+        # For this implementation, we'll create one UserEvent per conversion count
+        # This is simplified - in a real app, you'd have events for each real user
+        for i in range(conversion_count):
+            user_event = UserEvent(
+                variant_id=variant_id,
+                user_id=f"synthetic_{variant_id}_{funnel_step_id}_{i}",
+                funnel_step_id=funnel_step_id,
+                completed=True
+            )
+            db.session.add(user_event)
+        
+        # Commit all changes
+        db.session.commit()
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        print(f"Error saving conversion data: {e}")
+        raise 

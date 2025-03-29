@@ -1,23 +1,25 @@
 """
-Defines the FunnelStep model.
+Model for funnel steps in an experiment.
 """
 
 from ..extensions import db
 
-
 class FunnelStep(db.Model):
-  """Model for storing funnel step names."""
+  """
+  Represents a step in the experiment funnel.
+  Each step has a name and an order in the funnel.
+  """
   __tablename__ = 'funnel_steps'
 
   id = db.Column(db.Integer, primary_key=True)
-  name = db.Column(db.String(255), nullable=False) # e.g., 'Goals', 'Protections'
-
-  # Foreign Key to link back to the Experiment
   experiment_id = db.Column(db.Integer, db.ForeignKey('experiments.id'), nullable=False)
-
+  name = db.Column(db.String(100), nullable=False)
+  step_order = db.Column(db.Integer, nullable=False)
+  
   # Relationships
-  # One-to-Many: A FunnelStep can have multiple StepResults
-  step_results = db.relationship('StepResult', backref='funnel_step', lazy=True, cascade="all, delete-orphan")
+  experiment = db.relationship('Experiment', back_populates='funnel_steps')
+  step_results = db.relationship('StepResult', back_populates='funnel_step', cascade='all, delete-orphan')
+  user_events = db.relationship('UserEvent', back_populates='funnel_step', cascade='all, delete-orphan')
 
-  def __repr__(self) -> str:
-    return f'<FunnelStep {self.id} - {self.name} for Exp {self.experiment_id}>' 
+  def __repr__(self):
+    return f"<FunnelStep id={self.id} name={self.name} order={self.step_order}>" 

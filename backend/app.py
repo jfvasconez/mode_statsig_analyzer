@@ -7,10 +7,9 @@ from flask import Flask
 from flask_cors import CORS
 from flask_migrate import Migrate
 
-from .config import Config
-from .extensions import db
-from . import models
-from .routes.experiment_routes import experiment_bp
+from backend.config import Config
+from backend.extensions import db, init_db
+from backend.routes.experiment_routes import experiment_bp
 
 # Initialize Migrate
 migrate = Migrate()
@@ -24,7 +23,7 @@ def create_app(config_class=Config) -> Flask:
   CORS(app)
 
   # Initialize Flask extensions here
-  db.init_app(app)
+  init_db(app)
   migrate.init_app(app, db)
 
   # Register blueprints here

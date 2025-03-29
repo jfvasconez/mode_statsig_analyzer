@@ -1,31 +1,34 @@
 """
-Defines the Experiment model, representing a single analysis session.
+Model for experiments.
 """
 
 from datetime import datetime
-from sqlalchemy.sql import func # For server-side default timestamp
-from ..extensions import db # Import db from extensions.py
-
+from ..extensions import db
 
 class Experiment(db.Model):
-  """Model for storing experiment sessions."""
+  """
+  Represents an experiment with variants and funnel steps.
+  Each experiment has a name and creation timestamp.
+  """
   __tablename__ = 'experiments' # Explicit table name
-
+  
   id = db.Column(db.Integer, primary_key=True)
-  # Store the name of the uploaded file, if available
-  original_filename = db.Column(db.String(255), nullable=True)
-  # Timestamp when the experiment record was created
-  created_at = db.Column(
-    db.DateTime(timezone=True),
-    server_default=func.now(),
-    nullable=False
-  )
-
-  # Relationships (will be defined more fully later)
-  # One-to-Many: An Experiment can have multiple Variants
-  variants = db.relationship('Variant', backref='experiment', lazy=True, cascade="all, delete-orphan")
-  # One-to-Many: An Experiment can have multiple Funnel Steps
-  funnel_steps = db.relationship('FunnelStep', backref='experiment', lazy=True, cascade="all, delete-orphan")
-
-  def __repr__(self) -> str:
-    return f'<Experiment {self.id} - {self.original_filename or "N/A"} @ {self.created_at}>' 
+  experiment_name = db.Column(db.String(255), nullable=False)  # Changed from 'name' to 'experiment_name'
+  created_at = db.Column(db.DateTime, default=datetime.utcnow)
+  
+  # Relationships
+  variants = db.relationship('Variant', back_populates='experiment', cascade='all, delete-orphan')
+  funnel_steps = db.relationship('FunnelStep', back_populates='experiment', cascade='all, delete-orphan')
+  
+  # Property for backward compatibility
+  @property
+  def name(self):
+    return self.experiment_name
+    
+  # Setter for backward compatibility
+  @name.setter
+  def name(self, value):
+    self.experiment_name = value
+  
+  def __repr__(self):
+    return f"<Experiment id={self.id} name={self.experiment_name}>" 

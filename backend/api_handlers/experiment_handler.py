@@ -2,42 +2,61 @@
 Handles API logic related to experiments, primarily interfacing between routes and logic handlers.
 """
 
+from flask import jsonify
 from werkzeug.datastructures import FileStorage
-from typing import Dict, Any, Tuple
-import io # Import io module
+from backend.logic_handlers.experiment_logic import process_experiment_upload, get_experiment_results
+from werkzeug.utils import secure_filename
+import tempfile
+import os
 
-# Import the logic handler
-from ..logic_handlers.experiment_logic import process_and_analyze_experiment
-
-
-def handle_upload_experiment(file: FileStorage) -> Tuple[Dict[str, Any], int]:
+def handle_upload_experiment(file: FileStorage):
   """
-  Handles the initial processing of an uploaded experiment CSV file.
-  Calls the logic handler and returns its results.
+  Handles the uploaded CSV file and processes the experiment data.
+  """
+  # Validate file
+  if not file or not file.filename:
+    return {"error": "Invalid file"}, 400
+  
+  # Create a secure filename and save to temp file
+  filename = secure_filename(file.filename)
+  
+  # Create temp file
+  fd, temp_path = tempfile.mkstemp(suffix='.csv')
+  try:
+    # Close the file descriptor
+    os.close(fd)
+    # Save uploaded file to temp path
+    file.save(temp_path)
+    
+    # Process the experiment data via the logic handler
+    try:
+      experiment_id, name = process_experiment_upload(temp_path)
+      return {
+        "message": f"Successfully processed experiment: {name}",
+        "experiment_id": str(experiment_id)  # Convert ID to string for JSON serialization
+      }, 201
+    except Exception as e:
+      return {"error": str(e)}, 400
+  finally:
+    # Ensure temp file is removed, even if there's an exception
+    if os.path.exists(temp_path):
+      os.remove(temp_path)
 
-  Args:
-    file: The FileStorage object from the Flask request.
-
-  Returns:
-    A tuple containing a dictionary (the result from the logic handler) 
-    and an HTTP status code.
+def handle_get_experiment(experiment_id):
+  """
+  Retrieves experiment results by ID.
   """
   try:
-    if not file or not file.filename:
-      return {"error": "Invalid file provided to handler"}, 400
-
-    # Wrap the stream in BytesIO before passing
-    file_stream_bytesio = io.BytesIO(file.stream.read())
-    result_data = process_and_analyze_experiment(file_stream_bytesio, file.filename)
-
-    # Pass the logic handler's result directly (contains ID and message)
-    return result_data, 201 # Use 201 Created as a resource (Experiment) was created
-
+    # Get experiment results using the logic handler
+    results = get_experiment_results(experiment_id)
+    
+    if not results:
+      return {"error": f"Experiment with ID {experiment_id} not found"}, 404
+    
+    return results, 200
   except ValueError as e:
-      # Catch specific data validation/parsing errors from logic handler
-      print(f"Validation Error in handle_upload_experiment: {e}") 
-      return {"error": str(e)}, 400 # Return the specific error message
+    # Catch validation errors
+    return {"error": str(e)}, 400
   except Exception as e:
-    # Catch unexpected errors from logic handler or db handler
-    print(f"Error in handle_upload_experiment: {e}") 
-    return {"error": "An internal error occurred processing the experiment."}, 500 
+    # Catch other errors
+    return {"error": f"Failed to retrieve experiment results: {str(e)}"}, 500 

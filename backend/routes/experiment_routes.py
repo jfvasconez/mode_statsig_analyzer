@@ -4,7 +4,7 @@ Defines API routes related to experiments.
 
 from flask import Blueprint, request, jsonify
 # Import the handler
-from ..api_handlers.experiment_handler import handle_upload_experiment
+from backend.api_handlers.experiment_handler import handle_upload_experiment, handle_get_experiment
 
 # Create a Blueprint
 experiment_bp = Blueprint('experiment_bp', __name__)
@@ -30,4 +30,16 @@ def upload_experiment():
       print(f"Unhandled exception in upload_experiment route: {e}")
       return jsonify({"error": "An unexpected error occurred on the server."}), 500
   else:
-    return jsonify({"error": "Invalid file type, please upload a CSV file"}), 400 
+    return jsonify({"error": "Invalid file type, please upload a CSV file"}), 400
+
+@experiment_bp.route('/<experiment_id>/', methods=['GET'])
+def get_experiment(experiment_id):
+  """Route to get experiment results by ID."""
+  try:
+    # Call the API handler to get experiment results
+    response_data, status_code = handle_get_experiment(experiment_id)
+    return jsonify(response_data), status_code
+  except Exception as e:
+    # Log the exception in a real app
+    print(f"Unhandled exception in get_experiment route: {e}")
+    return jsonify({"error": "An unexpected error occurred on the server."}), 500 

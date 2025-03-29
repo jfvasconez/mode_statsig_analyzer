@@ -9,7 +9,14 @@ from scipy.stats import beta
 import numpy as np
 
 # Import the DB handler
-from ..db_handlers.experiment_db import save_experiment_results
+from backend.db_handlers.experiment_db import save_experiment_results, create_experiment_record, save_variant_data, get_experiment_with_variants, add_funnel_steps, get_experiment_name, get_variant_results
+
+# Import the models
+from backend.models.variant import Variant
+from backend.models.funnel_step import FunnelStep
+
+# Import the Bayesian logic
+from backend.logic_handlers.bayesian_logic import calculate_bayesian_metrics
 
 
 def _calculate_bayesian_metrics(conversions_a: int, trials_a: int, conversions_b: int, trials_b: int, num_samples: int = 20000) -> Dict[str, float]:
@@ -218,4 +225,146 @@ def process_and_analyze_experiment(file_stream: BytesIO, original_filename: str)
   except Exception as e:
     # Catch unexpected errors during processing or saving
     print(f"Unexpected error processing file {original_filename}: {e}")
-    raise Exception("An error occurred during experiment processing.") 
+    raise Exception("An error occurred during experiment processing.")
+
+def process_experiment_upload(file_path: str) -> Tuple[int, str]:
+    """
+    Process a CSV file containing experiment data and save it to the database.
+    Returns the experiment ID and name.
+    """
+    try:
+        # Read the CSV file using pandas
+        df = pd.read_csv(file_path)
+        
+        # Normalize column names (strip whitespace)
+        df.columns = df.columns.str.strip()
+
+        required_columns = ['experiment_name', 'variant', 'user_id']
+        if not all(col in df.columns for col in required_columns):
+            missing = [col for col in required_columns if col not in df.columns]
+            raise ValueError(f"Missing required columns: {', '.join(missing)}")
+            
+        # Extract experiment name from the first row
+        experiment_name = df['experiment_name'].iloc[0]
+        
+        # Create the experiment record
+        experiment_id = create_experiment_record(experiment_name)
+        
+        # Process variants
+        variants = df['variant'].unique()
+        
+        # Identify funnel steps (all columns except required ones)
+        funnel_columns = [col for col in df.columns if col not in ['experiment_name', 'variant', 'user_id']]
+        
+        if not funnel_columns:
+            raise ValueError("No funnel steps found in the CSV")
+            
+        # Add funnel steps to the database
+        add_funnel_steps(experiment_id, funnel_columns)
+        
+        # Process each variant
+        for variant_name in variants:
+            variant_df = df[df['variant'] == variant_name]
+            user_count = len(variant_df)
+            
+            # Save variant data to database
+            save_variant_data(experiment_id, variant_name, user_count, variant_df, funnel_columns)
+        
+        # Calculate Bayesian metrics
+        # This will be done when retrieving results to ensure all data is available
+        
+        return experiment_id, experiment_name
+    
+    except Exception as e:
+        # Log the error in a real application
+        print(f"Error processing experiment upload: {e}")
+        raise
+
+def get_experiment_results(experiment_id: str) -> Dict[str, Any]:
+    """
+    Retrieve the experiment results by ID.
+    Returns formatted experiment data including variants and their metrics.
+    """
+    try:
+        # Convert string ID to int
+        experiment_id_int = int(experiment_id)
+        
+        # Get experiment data from database
+        experiment_data = get_experiment_with_variants(experiment_id_int)
+        if not experiment_data:
+            return {}  # Return empty dict instead of None
+            
+        experiment, variants, funnel_steps_map = experiment_data
+        
+        # Get the experiment name
+        experiment_name = get_experiment_name(experiment_id_int)
+        
+        # Find the control variant (assuming it's named 'control')
+        control_variant = next((v for v in variants if v.variant_name.lower() == 'control'), None)
+        if not control_variant:
+            # If no variant is named 'control', use the first one
+            control_variant = variants[0]
+            
+        # Get other variants
+        other_variants = [v for v in variants if v.id != control_variant.id]
+        
+        # Get variant results including conversion rates for each funnel step
+        variant_results = get_variant_results(experiment_id_int)
+        
+        # Calculate Bayesian metrics for each variant compared to control
+        bayesian_results = {}
+        for variant in other_variants:
+            # Get control and variant conversion rates
+            try:
+                control_rates = [r['conversion_rate'] for r in variant_results.get(control_variant.variant_name, [])]
+                variant_rates = [r['conversion_rate'] for r in variant_results.get(variant.variant_name, [])]
+                
+                # Calculate Bayesian metrics for the last funnel step
+                if control_rates and variant_rates:
+                    bayesian_metrics = calculate_bayesian_metrics(
+                        control_rates[-1], 
+                        variant_rates[-1],
+                        control_variant.user_count,
+                        variant.user_count
+                    )
+                    bayesian_results[variant.variant_name] = bayesian_metrics
+            except Exception as e:
+                print(f"Error calculating Bayesian metrics for {variant.variant_name}: {e}")
+                # Continue with other variants if one fails
+                continue
+        
+        # Format response data
+        response = {
+            "experiment_name": experiment_name,
+            "control": format_variant_data(control_variant, variant_results),
+            "variants": [format_variant_data(variant, variant_results) for variant in other_variants],
+            "bayesian_results": bayesian_results
+        }
+        
+        return response
+    
+    except ValueError:
+        raise ValueError(f"Invalid experiment ID: {experiment_id}")
+    except Exception as e:
+        print(f"Error retrieving experiment results: {e}")
+        raise
+
+def format_variant_data(variant: Variant, variant_results: Dict[str, List[Dict]]) -> Dict[str, Any]:
+    """
+    Format variant data for API response.
+    """
+    results = variant_results.get(variant.variant_name, [])
+    
+    funnel_steps = []
+    for result in results:
+        funnel_steps.append({
+            "step_name": result['step_name'],
+            "overall_conversion": result['conversion_rate']
+        })
+    
+    return {
+        "variant_name": variant.variant_name,
+        "user_count": variant.user_count,
+        "funnel_steps": funnel_steps,
+        "relative_uplift": None  # This will be calculated in Bayesian results
+    } 
