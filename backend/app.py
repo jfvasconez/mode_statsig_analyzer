@@ -7,9 +7,10 @@ from flask import Flask
 from flask_cors import CORS
 from flask_migrate import Migrate
 
-from config import Config
+from .config import Config
 from .extensions import db
 from . import models
+from .routes.experiment_routes import experiment_bp
 
 # Initialize Migrate
 migrate = Migrate()
@@ -27,9 +28,7 @@ def create_app(config_class=Config) -> Flask:
   migrate.init_app(app, db)
 
   # Register blueprints here
-  # Example:
-  # from .routes.upload import upload_bp
-  # app.register_blueprint(upload_bp, url_prefix='/api/upload')
+  app.register_blueprint(experiment_bp, url_prefix='/api/experiments')
 
   # A simple default route for testing
   @app.route('/')
