@@ -12,7 +12,9 @@ import {
   TableRow,
   Skeleton,
   Alert,
-  Chip
+  Chip,
+  Tooltip,
+  ChipProps
 } from '@mui/material';
 import axios from 'axios';
 
@@ -20,33 +22,28 @@ interface ExperimentResultsProps {
   experimentId: string | null;
 }
 
-interface FunnelStep {
-  step_name: string;
-  overall_conversion: number;
-}
-
-interface Variant {
-  variant_name: string;
+interface StepResultData {
   user_count: number;
-  funnel_steps: FunnelStep[];
-  relative_uplift: number | null;
+  converted_count: number;
+  conversion_rate: number;
+  posterior_mean: number | null;
+  ci_95: [number | null, number | null];
+  prob_vs_control: number | null;
 }
 
-interface BayesianResult {
-  chance_to_beat_control: number;
-  relative_uplift: number;
-  credible_interval: [number, number];
-}
-
-interface VariantResults {
+interface ExperimentData {
+  experiment_id: number;
   experiment_name: string;
-  control: Variant;
-  variants: Variant[];
-  bayesian_results: Record<string, BayesianResult>;
+  variant_names: string[];
+  steps: {
+    [stepName: string]: {
+      [variantName: string]: StepResultData | null;
+    };
+  };
 }
 
 const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
-  const [results, setResults] = useState<VariantResults | null>(null);
+  const [results, setResults] = useState<ExperimentData | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,49 +114,25 @@ const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
     return null;
   }
 
-  const formatPercent = (value: number) => {
+  // Helper to safely access nested data
+  const getStepVariantData = (stepName: string, variantName: string): StepResultData | null => {
+    return results?.steps?.[stepName]?.[variantName] ?? null;
+  };
+
+  const formatPercent = (value: number | null | undefined): string => {
+    if (value === null || value === undefined) return 'N/A';
     return `${(value * 100).toFixed(2)}%`;
   };
 
-  const getChipColor = (chance: number) => {
+  const getChipColor = (chance: number | null | undefined): ChipProps['color'] => {
+    if (chance === null || chance === undefined) return 'default';
     if (chance >= 0.95) return 'success';
     if (chance >= 0.8) return 'warning';
     return 'default';
   };
 
-  const renderVariantRows = () => {
-    return results.variants.map((variant) => {
-      const bayesianResult = results.bayesian_results[variant.variant_name];
-      return (
-        <TableRow key={variant.variant_name}>
-          <TableCell>{variant.variant_name}</TableCell>
-          <TableCell align="right">{variant.user_count}</TableCell>
-          {variant.funnel_steps.map((step) => (
-            <TableCell key={step.step_name} align="right">
-              {formatPercent(step.overall_conversion)}
-            </TableCell>
-          ))}
-          <TableCell align="right">
-            {bayesianResult ? (
-              <Chip
-                label={formatPercent(bayesianResult.chance_to_beat_control)}
-                color={getChipColor(bayesianResult.chance_to_beat_control)}
-                size="small"
-              />
-            ) : 'N/A'}
-          </TableCell>
-          <TableCell align="right">
-            {bayesianResult ? formatPercent(bayesianResult.relative_uplift) : 'N/A'}
-          </TableCell>
-          <TableCell align="right">
-            {bayesianResult
-              ? `${formatPercent(bayesianResult.credible_interval[0])} to ${formatPercent(bayesianResult.credible_interval[1])}`
-              : 'N/A'}
-          </TableCell>
-        </TableRow>
-      );
-    });
-  };
+  // Extract step names for table rows
+  const stepNames = Object.keys(results.steps);
 
   return (
     <Paper
@@ -186,35 +159,57 @@ const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
 
       <Box sx={{ overflowX: 'auto' }}>
         <TableContainer>
-          <Table>
+          <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Variant</TableCell>
-                <TableCell align="right">Users</TableCell>
-                {results.control.funnel_steps.map((step) => (
-                  <TableCell key={step.step_name} align="right">
-                    {step.step_name}
+                <TableCell sx={{ fontWeight: 'bold' }}>Funnel Step</TableCell>
+                {/* Iterate through variant names for columns */}
+                {results.variant_names.map((variantName) => (
+                  <TableCell key={variantName} align="center" sx={{ fontWeight: 'bold' }}>
+                    {variantName}
                   </TableCell>
                 ))}
-                <TableCell align="right">Win Probability</TableCell>
-                <TableCell align="right">Relative Uplift</TableCell>
-                <TableCell align="right">95% Credible Interval</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              <TableRow sx={{ backgroundColor: 'rgba(0, 0, 0, 0.04)' }}>
-                <TableCell>{results.control.variant_name} (control)</TableCell>
-                <TableCell align="right">{results.control.user_count}</TableCell>
-                {results.control.funnel_steps.map((step) => (
-                  <TableCell key={step.step_name} align="right">
-                    {formatPercent(step.overall_conversion)}
+              {/* Iterate through step names for rows */}
+              {stepNames.map((stepName) => (
+                <TableRow key={stepName} hover>
+                  <TableCell component="th" scope="row" sx={{ fontWeight: 'medium' }}>
+                    {stepName}
                   </TableCell>
-                ))}
-                <TableCell align="right">—</TableCell>
-                <TableCell align="right">—</TableCell>
-                <TableCell align="right">—</TableCell>
-              </TableRow>
-              {renderVariantRows()}
+                  {/* For each step, iterate through variants to populate cells */}
+                  {results.variant_names.map((variantName) => {
+                    const data = getStepVariantData(stepName, variantName);
+                    return (
+                      <TableCell key={`${stepName}-${variantName}`} align="center">
+                        {data ? (
+                          <Box sx={{ lineHeight: 1.5 }}>
+                            <Typography variant="body2">
+                              {formatPercent(data.conversion_rate)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              ({data.converted_count} / {data.user_count})
+                            </Typography>
+                            {data.prob_vs_control !== null && (
+                              <Tooltip title={`Prob. vs Control: ${formatPercent(data.prob_vs_control)}\nCI95: [${formatPercent(data.ci_95[0])}, ${formatPercent(data.ci_95[1])}]\nPost. Mean: ${formatPercent(data.posterior_mean)}`}>
+                                <Chip
+                                  label={formatPercent(data.prob_vs_control)}
+                                  color={getChipColor(data.prob_vs_control)}
+                                  size="small"
+                                  sx={{ mt: 0.5 }}
+                                />
+                              </Tooltip>
+                            )}
+                          </Box>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">-</Typography>
+                        )}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </TableContainer>
@@ -222,16 +217,16 @@ const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
 
       <Box sx={{ mt: 4 }}>
         <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-          Explanation:
+          Explanation (per cell):
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          • <strong>Win Probability</strong>: The probability that this variant is better than the control.
+          • Top: Conversion Rate (%)
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          • <strong>Relative Uplift</strong>: The estimated percentage improvement over the control group.
+          • Middle: (Converted Count / Total Variant Users)
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          • <strong>95% Credible Interval</strong>: There's a 95% chance the true uplift falls within this range.
+          • Bottom (Chip): Win Probability vs Control (hover for more details)
         </Typography>
       </Box>
     </Paper>

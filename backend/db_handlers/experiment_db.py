@@ -9,7 +9,9 @@ from ..extensions import db
 from ..models.experiment import Experiment
 from ..models.variant import Variant
 from ..models.funnel_step import FunnelStep
+from ..models.step_result import StepResult
 from ..models.user_event import UserEvent
+import logging
 
 def create_experiment_record(experiment_name: str) -> int:
     """Create a new experiment record in the database."""
@@ -115,57 +117,197 @@ def get_experiment_name(experiment_id: int) -> str:
 
 def get_variant_results(experiment_id: int) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Get conversion rates for each funnel step for all variants in an experiment.
+    Get conversion rates and analysis metrics for each funnel step for all variants.
+    Queries the StepResult table for the data.
     Returns a dictionary mapping variant names to lists of step results.
     """
+    logging.info(f"get_variant_results called for experiment_id: {experiment_id}")
     try:
         # Get all variants for the experiment
         variants = Variant.query.filter_by(experiment_id=experiment_id).all()
         if not variants:
+            logging.warning(f"No variants found for experiment_id: {experiment_id}")
             return {}
             
         # Get all funnel steps for the experiment, ordered by step_order
         funnel_steps = FunnelStep.query.filter_by(experiment_id=experiment_id).order_by(FunnelStep.step_order).all()
         if not funnel_steps:
+            logging.warning(f"No funnel steps found for experiment_id: {experiment_id}")
             return {}
             
-        results = {}
+        # Fetch all StepResult records for this experiment for efficiency
+        all_step_results = StepResult.query.join(Variant).filter(Variant.experiment_id == experiment_id).all()
         
+        # Organize StepResult records by variant_id and then funnel_step_id for quick lookup
+        results_map: Dict[int, Dict[int, StepResult]] = {}
+        for sr in all_step_results:
+            if sr.variant_id not in results_map:
+                results_map[sr.variant_id] = {}
+            results_map[sr.variant_id][sr.funnel_step_id] = sr
+            
+        logging.info(f"Fetched and mapped {len(all_step_results)} StepResult records.")
+
+        final_results = {}
         for variant in variants:
-            variant_results = []
+            logging.info(f"Processing variant: {variant.variant_name} (ID: {variant.id})")
+            variant_step_data = []
+            variant_results_map = results_map.get(variant.id, {}) # Get results for this specific variant
             
             for step in funnel_steps:
-                # Count users who completed this step for this variant
-                completed_count = UserEvent.query.filter_by(
-                    variant_id=variant.id,
-                    funnel_step_id=step.id,
-                    completed=True
-                ).count()
+                step_result = variant_results_map.get(step.id) # Find the StepResult for this variant/step
                 
-                # Calculate conversion rate
-                conversion_rate = completed_count / variant.user_count if variant.user_count > 0 else 0
-                
-                variant_results.append({
-                    'step_name': step.name,
-                    'completed_count': completed_count,
-                    'conversion_rate': conversion_rate
-                })
-                
-            results[variant.variant_name] = variant_results
+                if step_result:
+                    # Data found in StepResult table
+                    completed_count = step_result.converted_count
+                    conversion_rate = completed_count / variant.user_count if variant.user_count > 0 else 0
+                    logging.debug(f"  Step: {step.name} (ID: {step.id}), Found StepResult: {step_result}")
+                    variant_step_data.append({
+                        'step_name': step.name,
+                        'completed_count': completed_count,
+                        'conversion_rate': conversion_rate,
+                        # Include other metrics from StepResult
+                        'posterior_mean': step_result.posterior_mean,
+                        'ci_lower_95': step_result.ci_lower_95,
+                        'ci_upper_95': step_result.ci_upper_95,
+                        'prob_vs_control': step_result.prob_vs_control
+                    })
+                else:
+                    # No StepResult found for this variant/step (shouldn't normally happen if saving worked)
+                    logging.warning(f"  Step: {step.name} (ID: {step.id}), No StepResult found for variant {variant.id}. Defaulting to 0.")
+                    variant_step_data.append({
+                        'step_name': step.name,
+                        'completed_count': 0,
+                        'conversion_rate': 0,
+                        'posterior_mean': None,
+                        'ci_lower_95': None,
+                        'ci_upper_95': None,
+                        'prob_vs_control': None
+                    })
+                    
+            final_results[variant.variant_name] = variant_step_data
             
-        return results
+        logging.info(f"Finished processing results for experiment {experiment_id}: {final_results}")
+        return final_results
     except SQLAlchemyError as e:
+        logging.error(f"Database error in get_variant_results for experiment {experiment_id}: {e}", exc_info=True)
         print(f"Error getting variant results: {e}")
         raise
+    except Exception as e:
+        logging.error(f"Unexpected error in get_variant_results for experiment {experiment_id}: {e}", exc_info=True)
+        raise # Re-raise other exceptions
 
 def save_experiment_results(data: Dict[str, Any]) -> int:
     """
-    Save experiment results to the database.
-    This is a placeholder for now.
+    Save experiment results derived from the analysis to the database.
+    Processes the structured data and saves Experiment, Variant, FunnelStep,
+    and StepResult records (including Bayesian metrics).
     """
-    # TODO: Implement proper saving logic once we have models defined
-    # For now, just return a dummy experiment ID
-    return 1
+    logging.info(f"save_experiment_results called with data: {data}")
+    session = db.session
+    try:
+        # 1. Create Experiment record
+        original_filename = data.get('original_filename', 'Unknown Experiment')
+        experiment = Experiment(experiment_name=original_filename)
+        session.add(experiment)
+        session.flush() # Assigns ID to experiment object
+        experiment_id = experiment.id
+        logging.info(f"Created experiment record with ID: {experiment_id}")
+
+        if not experiment_id:
+            raise ValueError("Failed to create experiment record, ID is missing.")
+
+        # 2. Process Variants and Funnel Steps
+        variants_data = data.get('variants', [])
+        if not variants_data:
+            logging.warning("No variant data found in the processed data.")
+            session.commit()
+            return experiment_id
+
+        # Collect unique step names and create FunnelStep records
+        funnel_step_names_set = set()
+        for variant_info in variants_data:
+            results_list = variant_info.get('results', []) # Renamed from 'results' to avoid confusion
+            for result_item in results_list:
+                funnel_step_names_set.add(result_item['step_name'])
+        
+        funnel_step_names_list = sorted(list(funnel_step_names_set))
+        logging.info(f"Found unique funnel steps: {funnel_step_names_list}")
+
+        funnel_step_map = {}
+        for i, step_name in enumerate(funnel_step_names_list):
+            funnel_step = FunnelStep(
+                experiment_id=experiment_id,
+                name=step_name,
+                step_order=i + 1
+            )
+            session.add(funnel_step)
+            session.flush()
+            funnel_step_map[step_name] = funnel_step.id
+        logging.info(f"Created funnel step records: {funnel_step_map}")
+
+        # 3. Create Variant records and StepResult records
+        for variant_info in variants_data:
+            variant_name = variant_info.get('name', 'Unknown Variant')
+            user_count = variant_info.get('user_count', 0)
+            
+            variant = Variant(
+                experiment_id=experiment_id,
+                variant_name=variant_name,
+                user_count=user_count
+                # No JSON field anymore
+            )
+            session.add(variant)
+            session.flush() # Assigns ID to variant object
+            variant_id = variant.id
+            logging.info(f"Created variant record: name={variant_name}, id={variant_id}, users={user_count}")
+
+            if not variant_id:
+                 logging.error(f"Failed to get ID for variant: {variant_name}")
+                 continue
+
+            # Create StepResult record for each step in this variant's analysis results
+            results_list = variant_info.get('results', [])
+            for result_item in results_list:
+                step_name = result_item['step_name']
+                funnel_step_id = funnel_step_map.get(step_name)
+                
+                if funnel_step_id is None:
+                    logging.warning(f"Could not find funnel step ID for step: {step_name} in variant {variant_name} when creating StepResult.")
+                    continue
+
+                # Extract metrics (handle potential None values)
+                metrics = result_item.get('metrics') or {}
+                converted_count = result_item.get('converted_count', 0)
+                posterior_mean = metrics.get('posterior_mean_b')
+                ci_lower = metrics.get('ci_lower_95_b')
+                ci_upper = metrics.get('ci_upper_95_b')
+                prob_vs_control = metrics.get('prob_b_better_than_a')
+                
+                step_result = StepResult(
+                    variant_id=variant_id,
+                    funnel_step_id=funnel_step_id,
+                    converted_count=converted_count,
+                    posterior_mean=posterior_mean,
+                    ci_lower_95=ci_lower,
+                    ci_upper_95=ci_upper,
+                    prob_vs_control=prob_vs_control
+                )
+                session.add(step_result)
+                logging.debug(f"Prepared StepResult for V:{variant_id}, S:{funnel_step_id}, Data:{step_result}")
+
+        # 4. Commit the transaction
+        session.commit()
+        logging.info(f"Transaction committed successfully for experiment ID: {experiment_id}")
+        return experiment_id
+
+    except SQLAlchemyError as e:
+        session.rollback()
+        logging.error(f"Database error in save_experiment_results: {e}", exc_info=True)
+        raise Exception(f"Failed to save experiment results to database: {e}")
+    except Exception as e:
+        session.rollback()
+        logging.error(f"Unexpected error in save_experiment_results: {e}", exc_info=True)
+        raise Exception(f"An unexpected error occurred while saving experiment results: {e}")
 
 def create_variant_record(experiment_id: int, variant_name: str, user_count: int) -> int:
     """Create a new variant record in the database."""

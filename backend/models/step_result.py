@@ -12,16 +12,16 @@ class StepResult(db.Model):
   """
   __tablename__ = 'step_results'
 
-  id = db.Column(db.Integer, primary_key=True)
-  variant_id = db.Column(db.Integer, db.ForeignKey('variants.id'), nullable=False)
-  funnel_step_id = db.Column(db.Integer, db.ForeignKey('funnel_steps.id'), nullable=False)
+  id = db.Column(db.Integer, primary_key=True) # Unique identifier for the step result record
+  variant_id = db.Column(db.Integer, db.ForeignKey('variants.id'), nullable=False) # Foreign key linking to the variant this result belongs to
+  funnel_step_id = db.Column(db.Integer, db.ForeignKey('funnel_steps.id'), nullable=False) # Foreign key linking to the funnel step this result corresponds to
   
   # Metrics
-  converted_count = db.Column(db.Integer, nullable=False, default=0)
-  posterior_mean = db.Column(db.Float, nullable=True)  # Rate as calculated by Bayesian analysis
-  ci_lower_95 = db.Column(db.Float, nullable=True)     # Lower bound of 95% credible interval
-  ci_upper_95 = db.Column(db.Float, nullable=True)     # Upper bound of 95% credible interval
-  prob_vs_control = db.Column(db.Float, nullable=True) # Probability of being better than control
+  converted_count = db.Column(db.Integer, nullable=False, default=0) # Number of users in the variant who completed this step
+  posterior_mean = db.Column(db.Float, nullable=True)  # The mean conversion rate estimated by the Bayesian analysis
+  ci_lower_95 = db.Column(db.Float, nullable=True)     # The lower bound of the 95% credible interval for the conversion rate
+  ci_upper_95 = db.Column(db.Float, nullable=True)     # The upper bound of the 95% credible interval for the conversion rate
+  prob_vs_control = db.Column(db.Float, nullable=True) # The calculated probability that this variant's true conversion rate is higher than the control variant's rate
   
   # Relationships
   variant = db.relationship('Variant', back_populates='step_results')

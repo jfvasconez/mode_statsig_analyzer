@@ -7,11 +7,13 @@ from io import StringIO, BytesIO
 from typing import Dict, Any, Tuple, List
 from scipy.stats import beta
 import numpy as np
+import logging
 
 # Import the DB handler
 from backend.db_handlers.experiment_db import save_experiment_results, create_experiment_record, save_variant_data, get_experiment_with_variants, add_funnel_steps, get_experiment_name, get_variant_results
 
 # Import the models
+from backend.models.experiment import Experiment
 from backend.models.variant import Variant
 from backend.models.funnel_step import FunnelStep
 
@@ -208,11 +210,19 @@ def process_and_analyze_experiment(file_stream: BytesIO, original_filename: str)
     
     # 4. Structure data for saving
     processed_data = _structure_processed_data(original_filename, variant_users, analysis_results)
+    logging.info(f"Structured data for saving: {processed_data}")
 
     # 5. Save to Database
+    logging.info("Calling save_experiment_results...")
     experiment_id = save_experiment_results(processed_data)
+    logging.info(f"save_experiment_results returned experiment_id: {experiment_id}")
 
     # 6. Return success
+    if experiment_id is None:
+      # Log and potentially raise a different error if saving failed silently
+      logging.error("save_experiment_results did not return a valid experiment ID.")
+      raise Exception("Database saving failed silently.")
+
     return {
         'experiment_id': experiment_id,
         'message': f'experiment_{experiment_id} processed and saved successfully.'
@@ -220,10 +230,12 @@ def process_and_analyze_experiment(file_stream: BytesIO, original_filename: str)
 
   except ValueError as ve:
       # Catch specific parsing/extraction errors
+      logging.error(f"Data processing error for {original_filename}: {ve}", exc_info=True)
       print(f"Data processing error for {original_filename}: {ve}")
       raise # Re-raise ValueError to be caught by API handler
   except Exception as e:
     # Catch unexpected errors during processing or saving
+    logging.error(f"Unexpected error in process_and_analyze_experiment: {e}", exc_info=True)
     print(f"Unexpected error processing file {original_filename}: {e}")
     raise Exception("An error occurred during experiment processing.")
 
@@ -232,16 +244,31 @@ def process_experiment_upload(file_path: str) -> Tuple[int, str]:
     Process a CSV file containing experiment data and save it to the database.
     Returns the experiment ID and name.
     """
+    logging.info(f"process_experiment_upload started with path: {file_path}")
     try:
         # Read the CSV file using pandas
+        logging.info(f"Attempting to read CSV from: {file_path}")
         df = pd.read_csv(file_path)
-        
+        logging.info(f"Successfully read CSV. Columns before stripping: {df.columns.tolist()}")
+
+        # --- Start BOM Fix ---
+        cols = df.columns.tolist()
+        if cols and isinstance(cols[0], str) and cols[0].startswith('\ufeff'):
+            logging.warning(f"Detected BOM character in first column name: {cols[0]}")
+            cols[0] = cols[0][1:] # Remove the BOM
+            df.columns = cols
+            logging.info(f"Columns after removing BOM from first column: {df.columns.tolist()}")
+        # --- End BOM Fix ---
+
         # Normalize column names (strip whitespace)
         df.columns = df.columns.str.strip()
+        logging.info(f"Columns after stripping: {df.columns.tolist()}")
 
         required_columns = ['experiment_name', 'variant', 'user_id']
+        logging.info(f"Checking for required columns: {required_columns}")
         if not all(col in df.columns for col in required_columns):
             missing = [col for col in required_columns if col not in df.columns]
+            logging.error(f"Missing required columns: {missing}. Actual columns found: {df.columns.tolist()}")
             raise ValueError(f"Missing required columns: {', '.join(missing)}")
             
         # Extract experiment name from the first row
@@ -277,94 +304,86 @@ def process_experiment_upload(file_path: str) -> Tuple[int, str]:
     
     except Exception as e:
         # Log the error in a real application
+        logging.error(f"Error in process_experiment_upload: {e}", exc_info=True)
         print(f"Error processing experiment upload: {e}")
         raise
 
 def get_experiment_results(experiment_id: str) -> Dict[str, Any]:
     """
     Retrieve the experiment results by ID.
-    Returns formatted experiment data including variants and their metrics.
+    Formats results with variants as columns and steps as rows.
     """
+    logging.info(f"get_experiment_results called for experiment_id: {experiment_id}")
     try:
-        # Convert string ID to int
         experiment_id_int = int(experiment_id)
         
-        # Get experiment data from database
-        experiment_data = get_experiment_with_variants(experiment_id_int)
-        if not experiment_data:
-            return {}  # Return empty dict instead of None
+        # --- Fetch Core Data --- 
+        experiment = Experiment.query.get(experiment_id_int)
+        if not experiment:
+            logging.warning(f"Experiment not found for ID: {experiment_id_int}")
+            return {"error": f"Experiment {experiment_id_int} not found"}
             
-        experiment, variants, funnel_steps_map = experiment_data
+        variants = Variant.query.filter_by(experiment_id=experiment_id_int).all()
+        funnel_steps = FunnelStep.query.filter_by(experiment_id=experiment_id_int).order_by(FunnelStep.step_order).all()
         
-        # Get the experiment name
-        experiment_name = get_experiment_name(experiment_id_int)
+        if not variants:
+            logging.warning(f"No variants found for experiment {experiment_id_int}")
+            return {"error": f"No variants found for experiment {experiment_id_int}"}
+        if not funnel_steps:
+             logging.warning(f"No funnel steps found for experiment {experiment_id_int}")
+             return {"error": f"No funnel steps found for experiment {experiment_id_int}"}
+
+        # Fetch all step results for the experiment
+        step_results_data = get_variant_results(experiment_id_int) # This now returns the detailed map
+        logging.info(f"Fetched step results data: {step_results_data}")
+
+        # --- Structure the Output --- 
+        # Goal: { step_name: { variant_name: { metric: value ... } } }
         
-        # Find the control variant (assuming it's named 'control')
-        control_variant = next((v for v in variants if v.variant_name.lower() == 'control'), None)
-        if not control_variant:
-            # If no variant is named 'control', use the first one
-            control_variant = variants[0]
-            
-        # Get other variants
-        other_variants = [v for v in variants if v.id != control_variant.id]
-        
-        # Get variant results including conversion rates for each funnel step
-        variant_results = get_variant_results(experiment_id_int)
-        
-        # Calculate Bayesian metrics for each variant compared to control
-        bayesian_results = {}
-        for variant in other_variants:
-            # Get control and variant conversion rates
-            try:
-                control_rates = [r['conversion_rate'] for r in variant_results.get(control_variant.variant_name, [])]
-                variant_rates = [r['conversion_rate'] for r in variant_results.get(variant.variant_name, [])]
-                
-                # Calculate Bayesian metrics for the last funnel step
-                if control_rates and variant_rates:
-                    bayesian_metrics = calculate_bayesian_metrics(
-                        control_rates[-1], 
-                        variant_rates[-1],
-                        control_variant.user_count,
-                        variant.user_count
-                    )
-                    bayesian_results[variant.variant_name] = bayesian_metrics
-            except Exception as e:
-                print(f"Error calculating Bayesian metrics for {variant.variant_name}: {e}")
-                # Continue with other variants if one fails
-                continue
-        
-        # Format response data
-        response = {
-            "experiment_name": experiment_name,
-            "control": format_variant_data(control_variant, variant_results),
-            "variants": [format_variant_data(variant, variant_results) for variant in other_variants],
-            "bayesian_results": bayesian_results
+        output_structure = {
+            "experiment_id": experiment_id_int,
+            "experiment_name": experiment.experiment_name,
+            "steps": {},
+            "variant_names": [v.variant_name for v in variants]
         }
         
-        return response
+        # Populate the 'steps' dictionary
+        for step in funnel_steps:
+            step_name = step.name
+            output_structure["steps"][step_name] = {}
+            for variant in variants:
+                variant_name = variant.variant_name
+                # Find the result data for this variant and step
+                variant_data = step_results_data.get(variant_name, [])
+                step_data = next((s for s in variant_data if s['step_name'] == step_name), None)
+                
+                if step_data:
+                    # Format the data for this cell in the table
+                    output_structure["steps"][step_name][variant_name] = {
+                        "user_count": variant.user_count, # Add user count for context
+                        "converted_count": step_data.get('completed_count'),
+                        "conversion_rate": step_data.get('conversion_rate'),
+                        "posterior_mean": step_data.get('posterior_mean'),
+                        "ci_95": [step_data.get('ci_lower_95'), step_data.get('ci_upper_95')],
+                        "prob_vs_control": step_data.get('prob_vs_control')
+                        # Add uplift calculation here if needed (requires identifying control)
+                    }
+                else:
+                    # Handle missing data (should ideally not happen)
+                     output_structure["steps"][step_name][variant_name] = None 
+                     logging.warning(f"Missing step data for {step_name} / {variant_name}")
+
+        logging.info(f"Formatted experiment results: {output_structure}")
+        return output_structure
     
     except ValueError:
+        logging.error(f"Invalid experiment ID format: {experiment_id}")
         raise ValueError(f"Invalid experiment ID: {experiment_id}")
     except Exception as e:
-        print(f"Error retrieving experiment results: {e}")
-        raise
+        logging.error(f"Error retrieving/formatting experiment results for {experiment_id}: {e}", exc_info=True)
+        # Consider returning a more specific error structure if needed by frontend
+        raise Exception(f"An error occurred while retrieving experiment results: {e}")
 
-def format_variant_data(variant: Variant, variant_results: Dict[str, List[Dict]]) -> Dict[str, Any]:
-    """
-    Format variant data for API response.
-    """
-    results = variant_results.get(variant.variant_name, [])
-    
-    funnel_steps = []
-    for result in results:
-        funnel_steps.append({
-            "step_name": result['step_name'],
-            "overall_conversion": result['conversion_rate']
-        })
-    
-    return {
-        "variant_name": variant.variant_name,
-        "user_count": variant.user_count,
-        "funnel_steps": funnel_steps,
-        "relative_uplift": None  # This will be calculated in Bayesian results
-    } 
+# Remove or comment out the old format_variant_data function as it's no longer used
+# def format_variant_data(variant: Variant, variant_results: Dict[str, List[Dict]]) -> Dict[str, Any]:
+#     ... 
