@@ -86,7 +86,10 @@ def _parse_csv_to_dataframe(file_stream: BytesIO) -> pd.DataFrame:
     raise ValueError(f"Failed to parse CSV content: {e}")
 
 def _extract_experiment_structure(df: pd.DataFrame, control_key: str = 'off') -> Tuple[Dict[str, int], pd.DataFrame, List[str]]:
-  """Extracts variant user counts, conversion pivot table, and step names from the DataFrame."""
+  """
+  Extracts variant user counts, conversion pivot table, and step names 
+  (in their original column order) from the DataFrame.
+  """
   try:
     # 1. Get User Counts per Variant
     users_df = df[df["Measure Names"] == "Users"]
@@ -108,11 +111,17 @@ def _extract_experiment_structure(df: pd.DataFrame, control_key: str = 'off') ->
                                       index=['VARIATION_KEY'],
                                       columns=['Step Name'],
                                       fill_value=0)
-    step_names = conv_df['Step Name'].unique().tolist()
+    
+    # Get unique step names while preserving original order from 'Measure Names'
+    ordered_measure_names = df.loc[df["Measure Names"].str.startswith("Ct_", na=False), "Measure Names"]
+    ordered_step_names = pd.Series(ordered_measure_names.str.replace("Ct_", "", regex=False)).unique().tolist()
+    logging.info(f"Extracted step names in original order: {ordered_step_names}")
 
-    return variant_users, conversion_pivot, step_names
+    # Return the ordered list
+    return variant_users, conversion_pivot, ordered_step_names 
   except (KeyError, ValueError, TypeError) as e:
       # Catch specific parsing/conversion errors
+      logging.error(f"Error extracting data structure from CSV: {e}", exc_info=True)
       raise ValueError(f"Error extracting data structure from CSV: {e}")
 
 def _perform_analysis(variant_users: Dict[str, int], conversion_pivot: pd.DataFrame, step_names: List[str], control_key: str = 'off') -> Dict[str, List[Dict[str, Any]]]:
@@ -167,17 +176,33 @@ def _perform_analysis(variant_users: Dict[str, int], conversion_pivot: pd.DataFr
         analysis_results[variant_key] = variant_analysis
     return analysis_results
 
-def _structure_processed_data(original_filename: str, variant_users: Dict[str, int], analysis_results: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
-  """Combines users counts and analysis results into the final structure for saving."""
+def _structure_processed_data(
+    original_filename: str, 
+    variant_users: Dict[str, int], 
+    analysis_results: Dict[str, List[Dict[str, Any]]],
+    ordered_step_names: List[str] # Add ordered step names here
+) -> Dict[str, Any]:
+  """
+  Combines users counts and analysis results into the final structure for saving,
+  including the desired order for funnel steps.
+  """
   processed_data = {
     'original_filename': original_filename,
+    'ordered_step_names': ordered_step_names, # Include the ordered list
     'variants': []
   }
   for variant_key, user_count in variant_users.items():
+      # Ensure results for each variant are also sorted according to the master order
+      variant_results = analysis_results.get(variant_key, [])
+      # Create a map for quick lookup
+      results_map = {res['step_name']: res for res in variant_results}
+      # Reorder the results list based on the ordered_step_names
+      ordered_variant_results = [results_map[step] for step in ordered_step_names if step in results_map]
+
       processed_data['variants'].append({
           'name': variant_key,
           'user_count': user_count,
-          'results': analysis_results.get(variant_key, []) # Get results for this variant
+          'results': ordered_variant_results # Use the re-ordered results
       })
   return processed_data
 
@@ -186,6 +211,7 @@ def _structure_processed_data(original_filename: str, variant_users: Dict[str, i
 def process_and_analyze_experiment(file_stream: BytesIO, original_filename: str) -> Dict[str, Any]:
   """
   Orchestrates the reading, parsing, analysis, and saving of experiment data.
+  Ensures funnel steps are ordered according to their appearance in the source file.
 
   Args:
     file_stream: The file stream object.
@@ -201,18 +227,22 @@ def process_and_analyze_experiment(file_stream: BytesIO, original_filename: str)
     # 1. Parse CSV to DataFrame
     df = _parse_csv_to_dataframe(file_stream)
 
-    # 2. Extract structure (can be replaced for different CSV formats)
+    # 2. Extract structure (gets ordered_step_names)
     control_key = 'off' # Define control key here or pass as arg
-    variant_users, conversion_pivot, step_names = _extract_experiment_structure(df, control_key)
+    # Renamed step_names -> ordered_step_names
+    variant_users, conversion_pivot, ordered_step_names = _extract_experiment_structure(df, control_key) 
 
-    # 3. Perform Bayesian Analysis (reusable core logic)
-    analysis_results = _perform_analysis(variant_users, conversion_pivot, step_names, control_key)
+    # 3. Perform Bayesian Analysis (pass ordered list)
+    # analysis_results = _perform_analysis(variant_users, conversion_pivot, step_names, control_key)
+    # Although _perform_analysis uses step_names, the order doesn't strictly matter for the analysis itself,
+    # only for structuring the output later. We pass the ordered list for consistency.
+    analysis_results = _perform_analysis(variant_users, conversion_pivot, ordered_step_names, control_key)
     
-    # 4. Structure data for saving
-    processed_data = _structure_processed_data(original_filename, variant_users, analysis_results)
-    logging.info(f"Structured data for saving: {processed_data}")
+    # 4. Structure data for saving (pass ordered list)
+    processed_data = _structure_processed_data(original_filename, variant_users, analysis_results, ordered_step_names)
+    logging.info(f"Structured data for saving (includes ordered steps): {processed_data}")
 
-    # 5. Save to Database
+    # 5. Save to Database (save_experiment_results will use 'ordered_step_names' from processed_data)
     logging.info("Calling save_experiment_results...")
     experiment_id = save_experiment_results(processed_data)
     logging.info(f"save_experiment_results returned experiment_id: {experiment_id}")
@@ -241,7 +271,8 @@ def process_and_analyze_experiment(file_stream: BytesIO, original_filename: str)
 
 def process_experiment_upload(file_path: str) -> Tuple[int, str]:
     """
-    Process a CSV file containing experiment data and save it to the database.
+    Process a CSV file containing experiment data, determine funnel order based
+    on average completion rates across variants, and save it to the database.
     Returns the experiment ID and name.
     """
     logging.info(f"process_experiment_upload started with path: {file_path}")
@@ -277,7 +308,7 @@ def process_experiment_upload(file_path: str) -> Tuple[int, str]:
         # Create the experiment record
         experiment_id = create_experiment_record(experiment_name)
         
-        # Process variants
+        # Get unique variant names
         variants = df['variant'].unique()
         
         # Identify funnel steps (all columns except required ones)
@@ -311,7 +342,7 @@ def process_experiment_upload(file_path: str) -> Tuple[int, str]:
 def get_experiment_results(experiment_id: str) -> Dict[str, Any]:
     """
     Retrieve the experiment results by ID.
-    Formats results with variants as columns and steps as rows.
+    Formats results with steps as an ordered list and variants as columns within each step.
     """
     logging.info(f"get_experiment_results called for experiment_id: {experiment_id}")
     try:
@@ -324,6 +355,7 @@ def get_experiment_results(experiment_id: str) -> Dict[str, Any]:
             return {"error": f"Experiment {experiment_id_int} not found"}
             
         variants = Variant.query.filter_by(experiment_id=experiment_id_int).all()
+        # Fetch funnel steps ordered by the explicitly saved step_order
         funnel_steps = FunnelStep.query.filter_by(experiment_id=experiment_id_int).order_by(FunnelStep.step_order).all()
         
         if not variants:
@@ -333,47 +365,55 @@ def get_experiment_results(experiment_id: str) -> Dict[str, Any]:
              logging.warning(f"No funnel steps found for experiment {experiment_id_int}")
              return {"error": f"No funnel steps found for experiment {experiment_id_int}"}
 
-        # Fetch all step results for the experiment
-        step_results_data = get_variant_results(experiment_id_int) # This now returns the detailed map
-        logging.info(f"Fetched step results data: {step_results_data}")
+        # Fetch all step results data once
+        step_results_data_map = get_variant_results(experiment_id_int) # Returns map: {variant_name: [step_result_dict, ...]}
+        logging.info(f"Fetched step results data map: {step_results_data_map}")
 
         # --- Structure the Output --- 
-        # Goal: { step_name: { variant_name: { metric: value ... } } }
+        # Goal: Return steps as an ordered list
         
         output_structure = {
             "experiment_id": experiment_id_int,
             "experiment_name": experiment.experiment_name,
-            "steps": {},
-            "variant_names": [v.variant_name for v in variants]
+            # Use a list to preserve order
+            "steps_data": [], 
+            # Keep variant names separate for easy header generation
+            "variant_names": [v.variant_name for v in variants] 
         }
         
-        # Populate the 'steps' dictionary
-        for step in funnel_steps:
+        # Populate the 'steps_data' list in the correct order
+        for step in funnel_steps: # Iterate through the ordered steps
             step_name = step.name
-            output_structure["steps"][step_name] = {}
+            current_step_results = {}
+            
             for variant in variants:
                 variant_name = variant.variant_name
-                # Find the result data for this variant and step
-                variant_data = step_results_data.get(variant_name, [])
-                step_data = next((s for s in variant_data if s['step_name'] == step_name), None)
+                # Find the result data for this variant and step from the fetched map
+                variant_step_list = step_results_data_map.get(variant_name, [])
+                step_data = next((s for s in variant_step_list if s['step_name'] == step_name), None)
                 
                 if step_data:
-                    # Format the data for this cell in the table
-                    output_structure["steps"][step_name][variant_name] = {
+                    # Format the data for this cell (variant) within the current step
+                    current_step_results[variant_name] = {
                         "user_count": variant.user_count, # Add user count for context
                         "converted_count": step_data.get('completed_count'),
                         "conversion_rate": step_data.get('conversion_rate'),
                         "posterior_mean": step_data.get('posterior_mean'),
                         "ci_95": [step_data.get('ci_lower_95'), step_data.get('ci_upper_95')],
                         "prob_vs_control": step_data.get('prob_vs_control')
-                        # Add uplift calculation here if needed (requires identifying control)
                     }
                 else:
-                    # Handle missing data (should ideally not happen)
-                     output_structure["steps"][step_name][variant_name] = None 
-                     logging.warning(f"Missing step data for {step_name} / {variant_name}")
+                    # Handle missing data (should ideally not happen if saving/fetching is consistent)
+                     current_step_results[variant_name] = None 
+                     logging.warning(f"Missing step result data for Step:'{step_name}' / Variant:'{variant_name}'")
+            
+            # Append the data for the current step (including all its variant results) to the list
+            output_structure["steps_data"].append({
+                "step_name": step_name,
+                "results": current_step_results
+            })
 
-        logging.info(f"Formatted experiment results: {output_structure}")
+        logging.info(f"Formatted experiment results with ordered steps_data: {output_structure}")
         return output_structure
     
     except ValueError:

@@ -201,6 +201,7 @@ def save_experiment_results(data: Dict[str, Any]) -> int:
     Save experiment results derived from the analysis to the database.
     Processes the structured data and saves Experiment, Variant, FunnelStep,
     and StepResult records (including Bayesian metrics).
+    Uses 'ordered_step_names' from data if available to set step order.
     """
     logging.info(f"save_experiment_results called with data: {data}")
     session = db.session
@@ -223,27 +224,35 @@ def save_experiment_results(data: Dict[str, Any]) -> int:
             session.commit()
             return experiment_id
 
-        # Collect unique step names and create FunnelStep records
-        funnel_step_names_set = set()
-        for variant_info in variants_data:
-            results_list = variant_info.get('results', []) # Renamed from 'results' to avoid confusion
-            for result_item in results_list:
-                funnel_step_names_set.add(result_item['step_name'])
+        # Determine funnel step order
+        ordered_step_names_input = data.get('ordered_step_names')
         
-        funnel_step_names_list = sorted(list(funnel_step_names_set))
-        logging.info(f"Found unique funnel steps: {funnel_step_names_list}")
-
+        if ordered_step_names_input and isinstance(ordered_step_names_input, list):
+            funnel_step_names_list = ordered_step_names_input
+            logging.info(f"Using provided order for funnel steps: {funnel_step_names_list}")
+        else:
+            # Fallback: Collect unique step names from results and sort alphabetically
+            logging.warning("'ordered_step_names' not provided or invalid in data. Falling back to alphabetical sorting.")
+            funnel_step_names_set = set()
+            for variant_info in variants_data:
+                results_list = variant_info.get('results', [])
+                for result_item in results_list:
+                    funnel_step_names_set.add(result_item['step_name'])
+            funnel_step_names_list = sorted(list(funnel_step_names_set))
+            logging.info(f"Using fallback alphabetical order for funnel steps: {funnel_step_names_list}")
+        
+        # Create FunnelStep records using the determined order
         funnel_step_map = {}
         for i, step_name in enumerate(funnel_step_names_list):
             funnel_step = FunnelStep(
                 experiment_id=experiment_id,
                 name=step_name,
-                step_order=i + 1
+                step_order=i + 1 # 1-based order based on the list
             )
             session.add(funnel_step)
             session.flush()
             funnel_step_map[step_name] = funnel_step.id
-        logging.info(f"Created funnel step records: {funnel_step_map}")
+        logging.info(f"Created funnel step records with map: {funnel_step_map}")
 
         # 3. Create Variant records and StepResult records
         for variant_info in variants_data:
@@ -254,7 +263,6 @@ def save_experiment_results(data: Dict[str, Any]) -> int:
                 experiment_id=experiment_id,
                 variant_name=variant_name,
                 user_count=user_count
-                # No JSON field anymore
             )
             session.add(variant)
             session.flush() # Assigns ID to variant object
@@ -272,7 +280,9 @@ def save_experiment_results(data: Dict[str, Any]) -> int:
                 funnel_step_id = funnel_step_map.get(step_name)
                 
                 if funnel_step_id is None:
-                    logging.warning(f"Could not find funnel step ID for step: {step_name} in variant {variant_name} when creating StepResult.")
+                    # This might happen if a step exists in results but wasn't in ordered_step_names
+                    # or the fallback collection. Log a warning.
+                    logging.warning(f"Could not find funnel step ID for step: '{step_name}' in variant '{variant_name}' when creating StepResult. Skipping step result.")
                     continue
 
                 # Extract metrics (handle potential None values)

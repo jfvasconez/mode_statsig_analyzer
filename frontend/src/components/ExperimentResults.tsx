@@ -3,7 +3,6 @@ import {
   Paper,
   Typography,
   Box,
-  Divider,
   Table,
   TableBody,
   TableCell,
@@ -31,15 +30,18 @@ interface StepResultData {
   prob_vs_control: number | null;
 }
 
+interface StepData {
+  step_name: string;
+  results: {
+    [variantName: string]: StepResultData | null;
+  };
+}
+
 interface ExperimentData {
   experiment_id: number;
   experiment_name: string;
   variant_names: string[];
-  steps: {
-    [stepName: string]: {
-      [variantName: string]: StepResultData | null;
-    };
-  };
+  steps_data: StepData[];
 }
 
 const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
@@ -56,7 +58,7 @@ const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
 
       try {
         const response = await axios.get(`/api/experiments/${experimentId}/`);
-        console.log('Experiment results:', response.data);
+        console.log('Experiment results (new structure):', response.data);
         setResults(response.data);
       } catch (err: any) {
         console.error('Error fetching results:', err);
@@ -110,14 +112,9 @@ const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
     );
   }
 
-  if (!results) {
+  if (!results || !results.steps_data) {
     return null;
   }
-
-  // Helper to safely access nested data
-  const getStepVariantData = (stepName: string, variantName: string): StepResultData | null => {
-    return results?.steps?.[stepName]?.[variantName] ?? null;
-  };
 
   const formatPercent = (value: number | null | undefined): string => {
     if (value === null || value === undefined) return 'N/A';
@@ -130,9 +127,6 @@ const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
     if (chance >= 0.8) return 'warning';
     return 'default';
   };
-
-  // Extract step names for table rows
-  const stepNames = Object.keys(results.steps);
 
   return (
     <Paper
@@ -163,7 +157,6 @@ const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ fontWeight: 'bold' }}>Funnel Step</TableCell>
-                {/* Iterate through variant names for columns */}
                 {results.variant_names.map((variantName) => (
                   <TableCell key={variantName} align="center" sx={{ fontWeight: 'bold' }}>
                     {variantName}
@@ -172,17 +165,15 @@ const ExperimentResults = ({ experimentId }: ExperimentResultsProps) => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {/* Iterate through step names for rows */}
-              {stepNames.map((stepName) => (
-                <TableRow key={stepName} hover>
+              {results.steps_data.map((stepItem) => (
+                <TableRow key={stepItem.step_name} hover>
                   <TableCell component="th" scope="row" sx={{ fontWeight: 'medium' }}>
-                    {stepName}
+                    {stepItem.step_name}
                   </TableCell>
-                  {/* For each step, iterate through variants to populate cells */}
                   {results.variant_names.map((variantName) => {
-                    const data = getStepVariantData(stepName, variantName);
+                    const data = stepItem.results[variantName] ?? null;
                     return (
-                      <TableCell key={`${stepName}-${variantName}`} align="center">
+                      <TableCell key={`${stepItem.step_name}-${variantName}`} align="center">
                         {data ? (
                           <Box sx={{ lineHeight: 1.5 }}>
                             <Typography variant="body2">
