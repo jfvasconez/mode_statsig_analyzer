@@ -22,6 +22,7 @@ import {
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, ReferenceLine } from 'recharts';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ConfidenceChart from './ConfidenceChart';
 
 // Custom styled components
 const StyledTableCell = styled(TableCell)(({ theme }) => ({
@@ -71,11 +72,23 @@ const dummyData = [
     credibleInterval: [95.2, 99.8],
     effectSize: 2.35,
     confidenceOverTime: [
-      { day: 1, confidence: 25 },
-      { day: 2, confidence: 45 },
-      { day: 3, confidence: 65 },
-      { day: 4, confidence: 85 },
-      { day: 5, confidence: 100 }
+      // Historical data
+      { date: '2024-03-01', confidence: 15, isProjected: false },
+      { date: '2024-03-02', confidence: 28, isProjected: false },
+      { date: '2024-03-03', confidence: 45, isProjected: false },
+      { date: '2024-03-04', confidence: 52, isProjected: false },
+      { date: '2024-03-05', confidence: 68, isProjected: false },
+      { date: '2024-03-06', confidence: 72, isProjected: false },
+      { date: '2024-03-07', confidence: 78, isProjected: false },
+      { date: '2024-03-08', confidence: 82, isProjected: false },
+      { date: '2024-03-09', confidence: 85, isProjected: false },
+      { date: '2024-03-10', confidence: 87, isProjected: false },
+      // Projected data - continues from last historical point
+      { date: '2024-03-11', confidence: 88.5, isProjected: true },
+      { date: '2024-03-12', confidence: 89.2, isProjected: true },
+      { date: '2024-03-13', confidence: 90.1, isProjected: true },
+      { date: '2024-03-14', confidence: 91.5, isProjected: true },
+      { date: '2024-03-15', confidence: 92.8, isProjected: true }
     ]
   },
   {
@@ -109,11 +122,18 @@ const dummyData = [
     credibleInterval: [65.5, 73.5],
     effectSize: 0.85,
     confidenceOverTime: [
-      { day: 1, confidence: 20 },
-      { day: 2, confidence: 35 },
-      { day: 3, confidence: 50 },
-      { day: 4, confidence: 65 },
-      { day: 5, confidence: 80 }
+      // Historical data
+      { date: '03-01', confidence: 20, isProjected: false },
+      { date: '03-02', confidence: 35, isProjected: false },
+      { date: '03-03', confidence: 50, isProjected: false },
+      { date: '03-04', confidence: 65, isProjected: false },
+      { date: '03-05', confidence: 80, isProjected: false },
+      // Projected data - continues from last historical point
+      { date: '03-06', confidence: 83, isProjected: true },
+      { date: '03-07', confidence: 86, isProjected: true },
+      { date: '03-08', confidence: 88, isProjected: true },
+      { date: '03-09', confidence: 91, isProjected: true },
+      { date: '03-10', confidence: 93, isProjected: true }
     ]
   },
   {
@@ -167,79 +187,38 @@ const ExpandableRow: React.FC<ExpandableRowProps> = ({ row, isExpanded }) => {
       <StyledTableCell colSpan={8} sx={{ p: 0 }}>
         <Collapse in={isExpanded}>
           <Box sx={{ py: 3, px: 4, backgroundColor: '#f7f9fc' }}>
-            <Box sx={{ display: 'flex', gap: 12 }}>
-              <Paper elevation={2} sx={{ flex: 1, p: 3 }}>
-                <Typography sx={{ color: '#1a73e8', fontSize: '0.795rem', mb: 2 }}>Detailed Metrics</Typography>
-                <Box sx={{ display: 'grid', gap: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Sample Size (Control):</Typography>
-                    <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.sampleSizeControl.toLocaleString()}</Typography>
-                  </Box>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Sample Size (Variant):</Typography>
-                    <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.sampleSizeVariant.toLocaleString()}</Typography>
-                  </Box>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>95% Credible Interval:</Typography>
-                    <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>[{row.credibleInterval[0]}%, {row.credibleInterval[1]}%]</Typography>
-                  </Box>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Effect Size (Cohen's h):</Typography>
-                    <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.effectSize} (Very Large)</Typography>
-                  </Box>
+            <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+              <Typography sx={{ color: '#1a73e8', fontSize: '0.795rem', mb: 2 }}>
+                Detailed Metrics
+              </Typography>
+              <Box sx={{ display: 'grid', gap: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Sample Size (Control):</Typography>
+                  <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.sampleSizeControl.toLocaleString()}</Typography>
                 </Box>
-              </Paper>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Sample Size (Variant):</Typography>
+                  <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.sampleSizeVariant.toLocaleString()}</Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>95% Credible Interval:</Typography>
+                  <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>[{row.credibleInterval[0]}%, {row.credibleInterval[1]}%]</Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Effect Size (Cohen's h):</Typography>
+                  <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.effectSize} (Very Large)</Typography>
+                </Box>
+              </Box>
+            </Paper>
 
-              <Paper elevation={2} sx={{ flex: 1, p: 3 }}>
-                <Typography sx={{ color: '#1a73e8', fontSize: '0.795rem', mb: 2 }}>Time to Significance</Typography>
-                <Box>
-                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem', mb: 1 }}>Current Progress:</Typography>
-                  <Box sx={{ width: '100%', height: 8, bgcolor: '#f1f3f4', borderRadius: 4, mb: 3 }}>
-                    <Box
-                      sx={{
-                        width: `${row.chanceToBeat}%`,
-                        height: '100%',
-                        bgcolor: '#34a853',
-                        borderRadius: 4
-                      }}
-                    />
-                  </Box>
-                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem', mb: 1 }}>Confidence Over Time:</Typography>
-                  <Box sx={{ height: 120, mt: 2 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={row.confidenceOverTime}>
-                        <XAxis
-                          dataKey="day"
-                          stroke="#5f6368"
-                          tickLine={false}
-                          axisLine={false}
-                        />
-                        <YAxis
-                          domain={[0, 100]}
-                          ticks={[25, 50, 75, 100]}
-                          stroke="#5f6368"
-                          tickLine={false}
-                          axisLine={false}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="confidence"
-                          stroke="#1a73e8"
-                          strokeWidth={2}
-                          dot={{ r: 4, fill: '#1a73e8' }}
-                        />
-                        <ReferenceLine
-                          y={95}
-                          stroke="#34a853"
-                          strokeDasharray="3 3"
-                          strokeWidth={1}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </Box>
-                </Box>
-              </Paper>
-            </Box>
+            <Paper elevation={2} sx={{ p: 3 }}>
+              <Typography sx={{ color: '#1a73e8', fontSize: '0.795rem', mb: 2 }}>
+                Time to Significance
+              </Typography>
+              <Box>
+                <ConfidenceChart data={row.confidenceOverTime} />
+              </Box>
+            </Paper>
           </Box>
         </Collapse>
       </StyledTableCell>
