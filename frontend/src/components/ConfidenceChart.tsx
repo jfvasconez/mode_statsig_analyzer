@@ -24,19 +24,49 @@ interface ConfidenceChartProps {
   data: ConfidenceDataPoint[];
 }
 
-const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
-  // Find the point where projection starts
-  const lastHistoricalIndex = data.findIndex(point => point.isProjected);
-  const historicalData = data.slice(0, lastHistoricalIndex);
-  const projectedData = data.slice(lastHistoricalIndex - 1); // Include overlap point
+// Helper type for series with potential nulls
+// Define the type explicitly to allow null confidence
+interface SeriesDataPoint {
+  date: string;
+  confidence: number | null; // Allow null
+  isProjected: boolean;
+}
 
-  // Check if we've reached confidence threshold
-  const hasReachedConfidence = historicalData.some(point => point.confidence >= 90);
+const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
+  // Find the index where projection starts
+  const lastHistoricalIndex = data.findIndex(point => point.isProjected);
+
+  // Check if we've reached confidence threshold in historical data
+  const historicalSegment = lastHistoricalIndex === -1 ? data : data.slice(0, lastHistoricalIndex);
+  const hasReachedConfidence = historicalSegment.some(point => point.confidence >= 90);
+
+  // Create data series for historical line (nulls after projection starts)
+  const historicalLineData: SeriesDataPoint[] = data.map((point, index) => ({
+    ...point,
+    // Set confidence to null if it's a projected point
+    confidence: (lastHistoricalIndex !== -1 && index >= lastHistoricalIndex) ? null : point.confidence,
+  }));
+
+  // Create data series for projected line (nulls before, includes overlap point)
+  let projectedLineData: SeriesDataPoint[] | null = null;
+  if (lastHistoricalIndex !== -1) {
+    projectedLineData = data.map((point, index) => ({
+      ...point,
+      // Keep confidence only for the overlap point (index - 1) and projected points (index >= lastHistoricalIndex)
+      confidence: index >= lastHistoricalIndex - 1 && point.isProjected
+        ? point.confidence
+        : (index === lastHistoricalIndex - 1 ? point.confidence : null)
+    }));
+  }
+
+  // Determine if the projected line should be shown
+  const showProjectedLine = !hasReachedConfidence && projectedLineData && projectedLineData.some(p => p?.confidence !== null && p.isProjected);
 
   return (
     <Box>
       <Box sx={{ height: 300, mt: 2 }}>
         <ResponsiveContainer width="100%" height="100%">
+          {/* Pass original data for axis calculation */}
           <LineChart
             data={data}
             margin={{ top: 20, right: 30, left: 10, bottom: 30 }}
@@ -75,33 +105,45 @@ const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
             />
             <Tooltip
               labelFormatter={(value) => `Date: ${value}`}
-              formatter={(value: number) => [`${value.toFixed(1)}%`, 'Confidence']}
+              formatter={(value: number, name, props) => {
+                // Don't show tooltip for null values
+                if (value === null || value === undefined) return null;
+                // Determine if the point is projected based on the original data point payload
+                const originalPoint = props.payload as ConfidenceDataPoint;
+                const label = originalPoint?.isProjected ? 'Projected Confidence' : 'Confidence';
+                return [`${value.toFixed(1)}%`, label];
+              }}
             />
-            {/* Historical data line */}
+
+            {/* Historical data line using historicalLineData */}
             <Line
-              data={historicalData}
+              data={historicalLineData} // Use series with nulls
               type="monotone"
               dataKey="confidence"
               stroke="#1a73e8"
               strokeWidth={2}
-              dot={{ r: 4, fill: '#1a73e8' }}
+              dot={{ r: 3, fill: '#1a73e8' }} // Consistent dot
               name="Historical"
-              connectNulls
+              connectNulls // <-- Connect across nulls
+              isAnimationActive={false}
             />
-            {/* Projected data line - only show if not reached confidence */}
-            {!hasReachedConfidence && projectedData.length > 0 && (
+
+            {/* Projected data line using projectedLineData */}
+            {showProjectedLine && projectedLineData && (
               <Line
-                data={projectedData}
+                data={projectedLineData} // Use series with nulls
                 type="monotone"
                 dataKey="confidence"
                 stroke="#1a73e8"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-                dot={{ r: 3, fill: '#1a73e8', strokeDasharray: '2 2' }}
+                dot={{ r: 3, fill: '#1a73e8' }} // Consistent dot
                 name="Projected"
-                connectNulls
+                connectNulls // <-- Connect across nulls
+                isAnimationActive={false}
               />
             )}
+
             <ReferenceLine
               y={90}
               stroke="#34a853"
@@ -116,7 +158,8 @@ const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
           </LineChart>
         </ResponsiveContainer>
       </Box>
-      {!hasReachedConfidence && (
+      {/* Legend only shown if projection exists and confidence not reached */}
+      {showProjectedLine && (
         <Box sx={{ display: 'flex', justifyContent: 'center', gap: 4, mt: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Box sx={{ width: 20, height: 2, bgcolor: '#1a73e8' }} />
@@ -125,7 +168,7 @@ const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Box sx={{ width: 20, height: 2, bgcolor: '#1a73e8', borderStyle: 'dashed', borderWidth: '2px' }} />
+            <Box sx={{ width: 20, height: 2, bgcolor: '#1a73e8', borderTop: '2px dashed #1a73e8' }} />
             <Typography sx={{ fontSize: '0.75rem', color: '#5f6368' }}>
               Projected Data
             </Typography>

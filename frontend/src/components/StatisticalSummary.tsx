@@ -103,11 +103,11 @@ const dummyData = [
     credibleInterval: [72.5, 78.9],
     effectSize: 1.85,
     confidenceOverTime: [
-      { day: 1, confidence: 25 },
-      { day: 2, confidence: 45 },
-      { day: 3, confidence: 65 },
-      { day: 4, confidence: 85 },
-      { day: 5, confidence: 95 }
+      { date: '2024-03-01', confidence: 25, isProjected: false },
+      { date: '2024-03-02', confidence: 45, isProjected: false },
+      { date: '2024-03-03', confidence: 65, isProjected: false },
+      { date: '2024-03-04', confidence: 85, isProjected: false },
+      { date: '2024-03-05', confidence: 95, isProjected: false }
     ]
   },
   {
@@ -122,18 +122,18 @@ const dummyData = [
     credibleInterval: [65.5, 73.5],
     effectSize: 0.85,
     confidenceOverTime: [
-      // Historical data
-      { date: '03-01', confidence: 20, isProjected: false },
-      { date: '03-02', confidence: 35, isProjected: false },
-      { date: '03-03', confidence: 50, isProjected: false },
-      { date: '03-04', confidence: 65, isProjected: false },
-      { date: '03-05', confidence: 80, isProjected: false },
+      // Historical data (Standardized date format YYYY-MM-DD)
+      { date: '2024-03-01', confidence: 20, isProjected: false },
+      { date: '2024-03-02', confidence: 35, isProjected: false },
+      { date: '2024-03-03', confidence: 50, isProjected: false },
+      { date: '2024-03-04', confidence: 65, isProjected: false },
+      { date: '2024-03-05', confidence: 80, isProjected: false },
       // Projected data - continues from last historical point
-      { date: '03-06', confidence: 83, isProjected: true },
-      { date: '03-07', confidence: 86, isProjected: true },
-      { date: '03-08', confidence: 88, isProjected: true },
-      { date: '03-09', confidence: 91, isProjected: true },
-      { date: '03-10', confidence: 93, isProjected: true }
+      { date: '2024-03-06', confidence: 83, isProjected: true },
+      { date: '2024-03-07', confidence: 86, isProjected: true },
+      { date: '2024-03-08', confidence: 88, isProjected: true },
+      { date: '2024-03-09', confidence: 91, isProjected: true },
+      { date: '2024-03-10', confidence: 93, isProjected: true }
     ]
   },
   {
@@ -148,11 +148,11 @@ const dummyData = [
     credibleInterval: [1.5, 4.0],
     effectSize: 2.15,
     confidenceOverTime: [
-      { day: 1, confidence: 25 },
-      { day: 2, confidence: 45 },
-      { day: 3, confidence: 65 },
-      { day: 4, confidence: 85 },
-      { day: 5, confidence: 95 }
+      { date: '2024-03-01', confidence: 25, isProjected: false },
+      { date: '2024-03-02', confidence: 45, isProjected: false },
+      { date: '2024-03-03', confidence: 65, isProjected: false },
+      { date: '2024-03-04', confidence: 85, isProjected: false },
+      { date: '2024-03-05', confidence: 95, isProjected: false }
     ]
   },
   {
@@ -167,11 +167,11 @@ const dummyData = [
     credibleInterval: [64.8, 72.8],
     effectSize: 0.45,
     confidenceOverTime: [
-      { day: 1, confidence: 20 },
-      { day: 2, confidence: 35 },
-      { day: 3, confidence: 50 },
-      { day: 4, confidence: 65 },
-      { day: 5, confidence: 80 }
+      { date: '2024-03-01', confidence: 20, isProjected: false },
+      { date: '2024-03-02', confidence: 35, isProjected: false },
+      { date: '2024-03-03', confidence: 50, isProjected: false },
+      { date: '2024-03-04', confidence: 65, isProjected: false },
+      { date: '2024-03-05', confidence: 80, isProjected: false }
     ]
   }
 ];
