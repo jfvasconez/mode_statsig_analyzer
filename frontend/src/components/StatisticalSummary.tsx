@@ -72,7 +72,7 @@ const dummyData = [
     credibleInterval: [95.2, 99.8],
     effectSize: 2.35,
     confidenceOverTime: [
-      // Historical data
+      // Historical data only - since it reached significance
       { date: '2024-03-01', confidence: 15, isProjected: false },
       { date: '2024-03-02', confidence: 28, isProjected: false },
       { date: '2024-03-03', confidence: 45, isProjected: false },
@@ -82,13 +82,7 @@ const dummyData = [
       { date: '2024-03-07', confidence: 78, isProjected: false },
       { date: '2024-03-08', confidence: 82, isProjected: false },
       { date: '2024-03-09', confidence: 85, isProjected: false },
-      { date: '2024-03-10', confidence: 87, isProjected: false },
-      // Projected data - continues from last historical point
-      { date: '2024-03-11', confidence: 88.5, isProjected: true },
-      { date: '2024-03-12', confidence: 89.2, isProjected: true },
-      { date: '2024-03-13', confidence: 90.1, isProjected: true },
-      { date: '2024-03-14', confidence: 91.5, isProjected: true },
-      { date: '2024-03-15', confidence: 92.8, isProjected: true }
+      { date: '2024-03-10', confidence: 92, isProjected: false } // Reached significance
     ]
   },
   {
@@ -122,18 +116,23 @@ const dummyData = [
     credibleInterval: [65.5, 73.5],
     effectSize: 0.85,
     confidenceOverTime: [
-      // Historical data (Standardized date format YYYY-MM-DD)
+      // Historical data
       { date: '2024-03-01', confidence: 20, isProjected: false },
       { date: '2024-03-02', confidence: 35, isProjected: false },
       { date: '2024-03-03', confidence: 50, isProjected: false },
       { date: '2024-03-04', confidence: 65, isProjected: false },
       { date: '2024-03-05', confidence: 80, isProjected: false },
-      // Projected data - continues from last historical point
-      { date: '2024-03-06', confidence: 83, isProjected: true },
-      { date: '2024-03-07', confidence: 86, isProjected: true },
-      { date: '2024-03-08', confidence: 88, isProjected: true },
-      { date: '2024-03-09', confidence: 91, isProjected: true },
-      { date: '2024-03-10', confidence: 93, isProjected: true }
+      // Projected data - 10 days to reach significance
+      { date: '2024-03-06', confidence: 82, isProjected: true },
+      { date: '2024-03-07', confidence: 84, isProjected: true },
+      { date: '2024-03-08', confidence: 85.5, isProjected: true },
+      { date: '2024-03-09', confidence: 87, isProjected: true },
+      { date: '2024-03-10', confidence: 88.2, isProjected: true },
+      { date: '2024-03-11', confidence: 89, isProjected: true },
+      { date: '2024-03-12', confidence: 89.5, isProjected: true },
+      { date: '2024-03-13', confidence: 89.8, isProjected: true },
+      { date: '2024-03-14', confidence: 90.1, isProjected: true },
+      { date: '2024-03-15', confidence: 90.5, isProjected: true }
     ]
   },
   {
@@ -167,11 +166,24 @@ const dummyData = [
     credibleInterval: [64.8, 72.8],
     effectSize: 0.45,
     confidenceOverTime: [
+      // Historical data
       { date: '2024-03-01', confidence: 20, isProjected: false },
       { date: '2024-03-02', confidence: 35, isProjected: false },
       { date: '2024-03-03', confidence: 50, isProjected: false },
       { date: '2024-03-04', confidence: 65, isProjected: false },
-      { date: '2024-03-05', confidence: 80, isProjected: false }
+      { date: '2024-03-05', confidence: 80, isProjected: false },
+      // Projected data - slower progression due to lower chance to beat
+      { date: '2024-03-06', confidence: 81.2, isProjected: true },
+      { date: '2024-03-07', confidence: 82.5, isProjected: true },
+      { date: '2024-03-08', confidence: 83.8, isProjected: true },
+      { date: '2024-03-09', confidence: 85.0, isProjected: true },
+      { date: '2024-03-10', confidence: 86.1, isProjected: true },
+      { date: '2024-03-11', confidence: 87.0, isProjected: true },
+      { date: '2024-03-12', confidence: 87.8, isProjected: true },
+      { date: '2024-03-13', confidence: 88.5, isProjected: true },
+      { date: '2024-03-14', confidence: 89.2, isProjected: true },
+      { date: '2024-03-15', confidence: 89.8, isProjected: true },
+      { date: '2024-03-16', confidence: 90.2, isProjected: true }
     ]
   }
 ];

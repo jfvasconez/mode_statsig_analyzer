@@ -24,14 +24,6 @@ interface ConfidenceChartProps {
   data: ConfidenceDataPoint[];
 }
 
-// Helper type for series with potential nulls
-// Define the type explicitly to allow null confidence
-interface SeriesDataPoint {
-  date: string;
-  confidence: number | null; // Allow null
-  isProjected: boolean;
-}
-
 const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
   // Find the index where projection starts
   const lastHistoricalIndex = data.findIndex(point => point.isProjected);
@@ -40,35 +32,22 @@ const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
   const historicalSegment = lastHistoricalIndex === -1 ? data : data.slice(0, lastHistoricalIndex);
   const hasReachedConfidence = historicalSegment.some(point => point.confidence >= 90);
 
-  // Create data series for historical line (nulls after projection starts)
-  const historicalLineData: SeriesDataPoint[] = data.map((point, index) => ({
-    ...point,
-    // Set confidence to null if it's a projected point
-    confidence: (lastHistoricalIndex !== -1 && index >= lastHistoricalIndex) ? null : point.confidence,
-  }));
-
-  // Create data series for projected line (nulls before, includes overlap point)
-  let projectedLineData: SeriesDataPoint[] | null = null;
-  if (lastHistoricalIndex !== -1) {
-    projectedLineData = data.map((point, index) => ({
-      ...point,
-      // Keep confidence only for the overlap point (index - 1) and projected points (index >= lastHistoricalIndex)
-      confidence: index >= lastHistoricalIndex - 1 && point.isProjected
-        ? point.confidence
-        : (index === lastHistoricalIndex - 1 ? point.confidence : null)
-    }));
-  }
-
   // Determine if the projected line should be shown
-  const showProjectedLine = !hasReachedConfidence && projectedLineData && projectedLineData.some(p => p?.confidence !== null && p.isProjected);
+  const showProjectedLine = !hasReachedConfidence && lastHistoricalIndex !== -1;
+
+  // Create a unified dataset with historical and projected values in separate fields
+  const chartData = data.map((point, index) => ({
+    date: point.date,
+    historical: index < lastHistoricalIndex || lastHistoricalIndex === -1 ? point.confidence : null,
+    projected: showProjectedLine && index >= lastHistoricalIndex - 1 ? point.confidence : null
+  }));
 
   return (
     <Box>
       <Box sx={{ height: 300, mt: 2 }}>
         <ResponsiveContainer width="100%" height="100%">
-          {/* Pass original data for axis calculation */}
           <LineChart
-            data={data}
+            data={chartData}
             margin={{ top: 20, right: 30, left: 10, bottom: 30 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
@@ -87,6 +66,8 @@ const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
                 offset: 20,
                 style: { fill: '#5f6368' }
               }}
+              type="category"
+              interval={0}
             />
             <YAxis
               domain={[0, 100]}
@@ -105,41 +86,54 @@ const ConfidenceChart: React.FC<ConfidenceChartProps> = ({ data }) => {
             />
             <Tooltip
               labelFormatter={(value) => `Date: ${value}`}
-              formatter={(value: number, name, props) => {
-                // Don't show tooltip for null values
+              formatter={(value: number, name: string) => {
                 if (value === null || value === undefined) return null;
-                // Determine if the point is projected based on the original data point payload
-                const originalPoint = props.payload as ConfidenceDataPoint;
-                const label = originalPoint?.isProjected ? 'Projected Confidence' : 'Confidence';
+                const label = name === 'projected' ? 'Projected Confidence' : 'Confidence';
                 return [`${value.toFixed(1)}%`, label];
               }}
             />
 
-            {/* Historical data line using historicalLineData */}
+            {/* Historical data line */}
             <Line
-              data={historicalLineData} // Use series with nulls
               type="monotone"
-              dataKey="confidence"
+              dataKey="historical"
               stroke="#1a73e8"
               strokeWidth={2}
-              dot={{ r: 3, fill: '#1a73e8' }} // Consistent dot
+              dot={{
+                r: 3,
+                fill: '#1a73e8',
+                strokeWidth: 0
+              }}
+              activeDot={{
+                r: 4,
+                fill: '#1a73e8',
+                strokeWidth: 0
+              }}
               name="Historical"
-              connectNulls // <-- Connect across nulls
+              connectNulls
               isAnimationActive={false}
             />
 
-            {/* Projected data line using projectedLineData */}
-            {showProjectedLine && projectedLineData && (
+            {/* Projected data line */}
+            {showProjectedLine && (
               <Line
-                data={projectedLineData} // Use series with nulls
                 type="monotone"
-                dataKey="confidence"
+                dataKey="projected"
                 stroke="#1a73e8"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-                dot={{ r: 3, fill: '#1a73e8' }} // Consistent dot
+                dot={{
+                  r: 3,
+                  fill: '#1a73e8',
+                  strokeWidth: 0
+                }}
+                activeDot={{
+                  r: 4,
+                  fill: '#1a73e8',
+                  strokeWidth: 0
+                }}
                 name="Projected"
-                connectNulls // <-- Connect across nulls
+                connectNulls
                 isAnimationActive={false}
               />
             )}
