@@ -2,6 +2,7 @@ import { useState } from 'react';
 import './App.css'
 import UploadForm from './components/UploadForm';
 import ExperimentResults from './components/ExperimentResults';
+import StatisticalSummary from './components/StatisticalSummary';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
 import Box from '@mui/material/Box';
@@ -35,6 +36,8 @@ function App() {
       <UploadForm onExperimentProcessed={handleExperimentProcessed} />
 
       <ExperimentResults experimentId={experimentId} />
+
+      <StatisticalSummary />
     </Container>
   )
 }

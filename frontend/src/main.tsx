@@ -6,7 +6,6 @@ import './index.css'
 import { ThemeProvider } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import theme from './theme'
-import axios from 'axios'
 
 // No need to set baseURL since we're using the Vite proxy configuration
 // axios will send requests to the current host, and Vite proxy will forward them
