@@ -198,39 +198,41 @@ const ExpandableRow: React.FC<ExpandableRowProps> = ({ row, isExpanded }) => {
     <TableRow>
       <StyledTableCell colSpan={8} sx={{ p: 0 }}>
         <Collapse in={isExpanded}>
-          <Box sx={{ py: 3, px: 4, backgroundColor: '#f7f9fc' }}>
-            <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
-              <Typography sx={{ color: '#1a73e8', fontSize: '0.795rem', mb: 2 }}>
-                Detailed Metrics
-              </Typography>
-              <Box sx={{ display: 'grid', gap: 2 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Sample Size (Control):</Typography>
-                  <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.sampleSizeControl.toLocaleString()}</Typography>
+          <Box sx={{ py: 3, px: 4, backgroundColor: '#f7f9fc', display: 'flex', justifyContent: 'center' }}>
+            <Box sx={{ maxWidth: '800px', width: '100%', display: 'flex', gap: 3, flexDirection: 'column' }}>
+              <Paper elevation={2} sx={{ p: 3, mb: 3, maxWidth: '400px', alignSelf: 'center' }}>
+                <Typography sx={{ color: '#1a73e8', fontSize: '0.795rem', mb: 2 }}>
+                  Detailed Metrics
+                </Typography>
+                <Box sx={{ display: 'grid', gap: 2, width: '100%' }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 4 }}>
+                    <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Sample Size (Control):</Typography>
+                    <Typography sx={{ fontWeight: 500, fontSize: '0.795rem', flexShrink: 0 }}>{row.sampleSizeControl.toLocaleString()}</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 4 }}>
+                    <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Sample Size (Variant):</Typography>
+                    <Typography sx={{ fontWeight: 500, fontSize: '0.795rem', flexShrink: 0 }}>{row.sampleSizeVariant.toLocaleString()}</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 4 }}>
+                    <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>95% Credible Interval:</Typography>
+                    <Typography sx={{ fontWeight: 500, fontSize: '0.795rem', flexShrink: 0 }}>[{row.credibleInterval[0]}%, {row.credibleInterval[1]}%]</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 4 }}>
+                    <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Effect Size (Cohen's h):</Typography>
+                    <Typography sx={{ fontWeight: 500, fontSize: '0.795rem', flexShrink: 0 }}>{row.effectSize} (Very Large)</Typography>
+                  </Box>
                 </Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Sample Size (Variant):</Typography>
-                  <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.sampleSizeVariant.toLocaleString()}</Typography>
-                </Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>95% Credible Interval:</Typography>
-                  <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>[{row.credibleInterval[0]}%, {row.credibleInterval[1]}%]</Typography>
-                </Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography sx={{ color: '#5f6368', fontSize: '0.795rem' }}>Effect Size (Cohen's h):</Typography>
-                  <Typography sx={{ fontWeight: 500, fontSize: '0.795rem' }}>{row.effectSize} (Very Large)</Typography>
-                </Box>
-              </Box>
-            </Paper>
+              </Paper>
 
-            <Paper elevation={2} sx={{ p: 3 }}>
-              <Typography sx={{ color: '#1a73e8', fontSize: '0.795rem', mb: 2 }}>
-                Time to Significance
-              </Typography>
-              <Box>
-                <ConfidenceChart data={row.confidenceOverTime} />
-              </Box>
-            </Paper>
+              <Paper elevation={2} sx={{ p: 3 }}>
+                <Typography sx={{ color: '#1a73e8', fontSize: '0.795rem', mb: 2 }}>
+                  Time to Significance
+                </Typography>
+                <Box>
+                  <ConfidenceChart data={row.confidenceOverTime} />
+                </Box>
+              </Paper>
+            </Box>
           </Box>
         </Collapse>
       </StyledTableCell>
@@ -321,7 +323,17 @@ const StatisticalSummary: React.FC = () => {
                   <StyledTableCell>{row.chanceToBeat.toFixed(2)}%</StyledTableCell>
                   <StyledTableCell>
                     {row.significant ? (
-                      <Typography sx={{ color: '#34a853', fontSize: '0.8125rem' }}>Reached</Typography>
+                      <Typography sx={{ color: '#34a853', fontSize: '0.8125rem' }}>
+                        {(() => {
+                          // Find the date when confidence reached 90%
+                          const reachedDate = row.confidenceOverTime.find(point => point.confidence >= 90)?.date;
+                          if (reachedDate) {
+                            const date = new Date(reachedDate);
+                            return `Reached on ${date.getMonth() + 1}/${date.getDate()}`;
+                          }
+                          return 'Reached';
+                        })()}
+                      </Typography>
                     ) : (
                       <Typography sx={{ color: '#5f6368', fontSize: '0.8125rem' }}>
                         10 days (12/8)
