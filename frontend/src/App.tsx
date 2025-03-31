@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import './App.css'
 import UploadForm from './components/UploadForm';
-import ExperimentResults from './components/ExperimentResults';
-import StatisticalSummary from './components/StatisticalSummary';
+import ExperimentResults from './components/v1/ExperimentResults';
+import StatisticalSummary from './components/stat_summary/StatisticalSummary';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
 import Box from '@mui/material/Box';
